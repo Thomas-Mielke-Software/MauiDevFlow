@@ -31,8 +31,7 @@ Verify: `maui-devflow --version && android --help && apple --help`
 ## Integrating MauiDevFlow into a MAUI App
 
 Add project references (or NuGet packages `Redth.MauiDevFlow.Agent` and
-`Redth.MauiDevFlow.Blazor`) for MauiDevFlow.Agent and
-`MauiDevFlow.Blazor` (Blazor Hybrid only), then register in `MauiProgram.cs`:
+`Redth.MauiDevFlow.Blazor` for Blazor Hybrid), then register in `MauiProgram.cs`:
 
 ```csharp
 using MauiDevFlow.Agent;
