@@ -25,7 +25,40 @@ manually check the simulator.
 
 ## Quick Start
 
-### 1. Add Agent to your MAUI App
+### AI-Assisted Setup (Recommended)
+
+The fastest way to get started is to let your AI agent set everything up using the included skill:
+
+**1. Install the CLI tool and download the skill:**
+
+```bash
+dotnet tool install --global Redth.MauiDevFlow.CLI
+maui-devflow update-skill
+```
+
+**2. Ask your AI agent to set up MauiDevFlow:**
+
+> Use the maui-ai-debugging skill to integrate MauiDevFlow into my MAUI app.
+> Add the NuGet packages, configure MauiProgram.cs, and set up everything
+> needed for debugging. Then build, run, and verify it works.
+
+The skill includes a complete setup guide with a step-by-step checklist, platform-specific
+configuration (entitlements, port forwarding), and the full command reference. The agent
+will handle NuGet packages, code changes, Blazor script tags, and verification.
+
+### Manual Setup
+
+<details>
+<summary>Click to expand manual setup steps</summary>
+
+#### 1. Add NuGet Packages
+
+```xml
+<PackageReference Include="Redth.MauiDevFlow.Agent" Version="*" />
+<PackageReference Include="Redth.MauiDevFlow.Blazor" Version="*" />  <!-- Blazor Hybrid only -->
+```
+
+#### 2. Configure MauiProgram.cs
 
 ```csharp
 // MauiProgram.cs
@@ -48,26 +81,31 @@ builder.AddMauiBlazorDevFlowTools(options => { options.Port = 9222; }); // Blazo
 
 Both methods extend `MauiAppBuilder`.
 
-**Blazor Hybrid apps** also need a script tag in `wwwroot/index.html` (the `chobitsu.js` file is auto-copied to `wwwroot/js/` during Debug builds by the NuGet package):
+#### 3. Blazor Hybrid: Add Script Tag
+
+Blazor Hybrid apps also need a script tag in `wwwroot/index.html` (the `chobitsu.js` file is auto-copied to `wwwroot/js/` during Debug builds by the NuGet package):
 
 ```html
 <script src="js/chobitsu.js"></script>  <!-- Add before </head> -->
 ```
 
-### 2. Install the CLI Tool
+#### 4. Install CLI Tools
 
 ```bash
 dotnet tool install --global Redth.MauiDevFlow.CLI
-```
-
-Companion tools for device/emulator management:
-
-```bash
 dotnet tool install --global androidsdk.tool    # android (SDK, AVD, device management)
 dotnet tool install --global appledev.tools     # apple (simulators, provisioning, certificates)
 ```
 
-### 3. Run Commands
+#### 5. Platform-Specific Setup
+
+- **Mac Catalyst:** Add `com.apple.security.network.server` entitlement (see [setup guide](.claude/skills/maui-ai-debugging/references/setup.md#5-mac-catalyst-entitlements))
+- **Android Emulator:** Run `adb reverse tcp:9223 tcp:9223` (and `tcp:9222` for Blazor)
+- **iOS Simulator:** No extra setup needed
+
+</details>
+
+### Verify It Works
 
 ```bash
 # Check agent connection
@@ -76,27 +114,12 @@ maui-devflow MAUI status
 # Dump visual tree
 maui-devflow MAUI tree
 
-# Find elements
-maui-devflow MAUI query --type Button
-maui-devflow MAUI query --text "Submit"
-
-# Interact with elements
-maui-devflow MAUI tap <elementId>
-maui-devflow MAUI fill <elementId> "Hello World"
-maui-devflow MAUI clear <elementId>
-
 # Take screenshot
 maui-devflow MAUI screenshot --output screen.png
 
-# Get element property
-maui-devflow MAUI property <elementId> IsVisible
-
-# Get element details
-maui-devflow MAUI element <elementId>
-
-# Shell navigation (for Shell-based apps)
-maui-devflow MAUI navigate "//native"
-maui-devflow MAUI navigate "//blazor"
+# Blazor WebView (if applicable)
+maui-devflow cdp status
+maui-devflow cdp snapshot
 ```
 
 ## Blazor WebView CDP Commands
