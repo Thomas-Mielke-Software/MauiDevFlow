@@ -130,10 +130,24 @@ public abstract class BlazorWebViewDebugServiceBase : IDisposable
             if (i == 0 || check?.ToString() == "loaded")
                 Log($"[BlazorDevFlow] Chobitsu check #{i}: {check}");
             if (check?.ToString() == "loaded") break;
+
+            // After a few attempts, check the HTML for the script tag to give an early error
+            if (i == 5)
+            {
+                var hasTag = await EvaluateJavaScriptAsync(
+                    "document.querySelector('script[src*=\"chobitsu\"]') ? 'found' : 'missing'");
+                if (hasTag?.ToString() == "missing")
+                {
+                    Log("[BlazorDevFlow] ❌ Missing required script tag in wwwroot/index.html.");
+                    Log("[BlazorDevFlow] Add this before </head>:  <script src=\"js/chobitsu.js\"></script>");
+                    Log("[BlazorDevFlow] The chobitsu.js file is auto-copied to wwwroot/js/ by the NuGet package during Debug builds.");
+                    return;
+                }
+            }
+
             if (i == 29)
             {
-                Log("[BlazorDevFlow] Chobitsu not loaded after 15s. Add <script src=\"js/chobitsu.js\"></script> to wwwroot/index.html before </head>.");
-                Log("[BlazorDevFlow] The chobitsu.js file is auto-copied to wwwroot/js/ by the NuGet package during Debug builds.");
+                Log("[BlazorDevFlow] Chobitsu not loaded after 15s — the script tag exists but chobitsu.js may be missing from wwwroot/js/.");
                 return;
             }
             await Task.Delay(500);
