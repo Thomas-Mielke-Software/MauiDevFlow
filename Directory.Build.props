@@ -10,8 +10,13 @@
     <Version>1.0.0</Version>
     <Authors>MauiDevFlow Contributors</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryUrl>https://github.com/Redth/MauiDevFlow</RepositoryUrl>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' != 'false'">
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
   <!-- Common SupportedOSPlatformVersion for all MAUI projects -->
   <PropertyGroup Condition="'$(UseMaui)' == 'true'">
