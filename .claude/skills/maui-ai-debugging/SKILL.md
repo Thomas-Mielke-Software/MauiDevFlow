@@ -155,6 +155,7 @@ Global options: `--agent-host` (default localhost), `--agent-port` (default 9223
 | `MAUI property <elementId> <prop>` | Read property (Text, IsVisible, FontSize, etc.) |
 | `MAUI element <elementId>` | Full element JSON (type, bounds, children, etc.) |
 | `MAUI navigate <route>` | Shell navigation (e.g. `//native`, `//blazor`) |
+| `MAUI logs [--limit N] [--skip N]` | Fetch application logs (newest first) |
 
 Element IDs come from `MAUI tree` or `MAUI query`. AutomationId-based elements use their
 AutomationId directly. Others use generated hex IDs. When multiple elements share the same
@@ -197,6 +198,7 @@ The agent exposes JSON endpoints on port 9223 (configurable):
 | `/api/action/focus` | POST | `{"elementId":"..."}` |
 | `/api/screenshot` | GET | — (returns PNG) |
 | `/api/property/{id}/{name}` | GET | — |
+| `/api/logs?limit=N&skip=N` | GET | — (returns JSON array of log entries) |
 
 ## Platform Details
 

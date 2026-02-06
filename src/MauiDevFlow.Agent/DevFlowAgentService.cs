@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Maui;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Dispatching;
+using MauiDevFlow.Agent.Logging;
 
 namespace MauiDevFlow.Agent;
 
@@ -14,6 +15,7 @@ public class DevFlowAgentService : IDisposable
     private readonly AgentOptions _options;
     private readonly AgentHttpServer _server;
     private readonly VisualTreeWalker _treeWalker;
+    private FileLogProvider? _logProvider;
     private Application? _app;
     private IDispatcher? _dispatcher;
     private bool _disposed;
@@ -28,6 +30,13 @@ public class DevFlowAgentService : IDisposable
         _treeWalker = new VisualTreeWalker();
         RegisterRoutes();
     }
+
+    /// <summary>
+    /// Sets the file log provider for serving logs via the API.
+    /// Called by AgentServiceExtensions during registration.
+    /// </summary>
+    public void SetLogProvider(FileLogProvider provider)
+        => _logProvider = provider;
 
     /// <summary>
     /// Starts the agent and binds to the running MAUI app.
@@ -66,6 +75,7 @@ public class DevFlowAgentService : IDisposable
         _server.MapPost("/api/action/clear", HandleClear);
         _server.MapPost("/api/action/focus", HandleFocus);
         _server.MapPost("/api/action/navigate", HandleNavigate);
+        _server.MapGet("/api/logs", HandleLogs);
     }
 
     private Task<HttpResponse> HandleStatus(HttpRequest request)
@@ -378,6 +388,22 @@ public class DevFlowAgentService : IDisposable
         if (_disposed) return;
         _disposed = true;
         _server.Dispose();
+        _logProvider?.Dispose();
+    }
+
+    private Task<HttpResponse> HandleLogs(HttpRequest request)
+    {
+        if (_logProvider == null)
+            return Task.FromResult(HttpResponse.Error("File logging is not enabled"));
+
+        var limitStr = request.QueryParams.GetValueOrDefault("limit", "100");
+        var skipStr = request.QueryParams.GetValueOrDefault("skip", "0");
+
+        if (!int.TryParse(limitStr, out var limit)) limit = 100;
+        if (!int.TryParse(skipStr, out var skip)) skip = 0;
+
+        var entries = _logProvider.Reader.Read(limit, skip);
+        return Task.FromResult(HttpResponse.Json(entries));
     }
 }
 

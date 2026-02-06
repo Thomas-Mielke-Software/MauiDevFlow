@@ -208,6 +208,14 @@ class Program
         mauiNavigateCmd.SetHandler(async (host, port, route) => await MauiNavigateAsync(host, port, route), agentHostOption, agentPortOption, navRouteArg);
         mauiCommand.Add(mauiNavigateCmd);
 
+        // logs command
+        var logsLimitOption = new Option<int>("--limit", () => 100, "Number of log entries to return");
+        var logsSkipOption = new Option<int>("--skip", () => 0, "Number of newest entries to skip");
+        var mauiLogsCmd = new Command("logs", "Fetch application logs") { logsLimitOption, logsSkipOption };
+        mauiLogsCmd.SetHandler(async (host, port, limit, skip) => await MauiLogsAsync(host, port, limit, skip),
+            agentHostOption, agentPortOption, logsLimitOption, logsSkipOption);
+        mauiCommand.Add(mauiLogsCmd);
+
         rootCommand.Add(mauiCommand);
 
         // ===== update-skill command =====
@@ -820,6 +828,64 @@ class Program
             using var client = new MauiDevFlow.Driver.AgentClient(host, port);
             var success = await client.NavigateAsync(route);
             Console.WriteLine(success ? $"Navigated to: {route}" : $"Failed to navigate to: {route}");
+        }
+        catch (Exception ex) { WriteError(ex.Message); }
+    }
+
+    private static async Task MauiLogsAsync(string host, int port, int limit, int skip)
+    {
+        try
+        {
+            using var http = new HttpClient();
+            http.BaseAddress = new Uri($"http://{host}:{port}");
+            var response = await http.GetAsync($"/api/logs?limit={limit}&skip={skip}");
+            var json = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                WriteError($"Failed to fetch logs: {response.StatusCode} {json}");
+                return;
+            }
+
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                Console.WriteLine(json);
+                return;
+            }
+
+            foreach (var entry in doc.RootElement.EnumerateArray())
+            {
+                var ts = entry.GetProperty("t").GetString() ?? "";
+                var level = entry.GetProperty("l").GetString() ?? "";
+                var category = entry.GetProperty("c").GetString() ?? "";
+                var message = entry.GetProperty("m").GetString() ?? "";
+                var exception = entry.TryGetProperty("e", out var eProp) ? eProp.GetString() : null;
+
+                // Color-code by level
+                var color = level switch
+                {
+                    "Critical" or "Error" => ConsoleColor.Red,
+                    "Warning" => ConsoleColor.Yellow,
+                    "Debug" or "Trace" => ConsoleColor.DarkGray,
+                    _ => ConsoleColor.White
+                };
+
+                var saved = Console.ForegroundColor;
+                Console.ForegroundColor = color;
+                Console.Write($"[{ts}] ");
+                Console.Write($"{level,-12} ");
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.Write($"{category}: ");
+                Console.ForegroundColor = color;
+                Console.WriteLine(message);
+                if (!string.IsNullOrEmpty(exception))
+                {
+                    Console.ForegroundColor = ConsoleColor.DarkRed;
+                    Console.WriteLine($"  Exception: {exception}");
+                }
+                Console.ForegroundColor = saved;
+            }
         }
         catch (Exception ex) { WriteError(ex.Message); }
     }

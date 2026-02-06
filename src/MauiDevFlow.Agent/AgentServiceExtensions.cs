@@ -1,7 +1,9 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Dispatching;
 using Microsoft.Maui.Hosting;
 using Microsoft.Maui.LifecycleEvents;
+using MauiDevFlow.Agent.Logging;
 
 namespace MauiDevFlow.Agent;
 
@@ -21,6 +23,14 @@ public static class AgentServiceExtensions
 
         var service = new DevFlowAgentService(options);
         builder.Services.AddSingleton(service);
+
+        if (options.EnableFileLogging)
+        {
+            var logDir = Path.Combine(FileSystem.CacheDirectory, "mauidevflow-logs");
+            var logProvider = new FileLogProvider(logDir, options.MaxLogFileSize, options.MaxLogFiles);
+            service.SetLogProvider(logProvider);
+            builder.Logging.AddProvider(logProvider);
+        }
 
         builder.ConfigureLifecycleEvents(lifecycle =>
         {

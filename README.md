@@ -117,6 +117,9 @@ maui-devflow MAUI tree
 # Take screenshot
 maui-devflow MAUI screenshot --output screen.png
 
+# Fetch application logs
+maui-devflow MAUI logs --limit 50
+
 # Blazor WebView (if applicable)
 maui-devflow cdp status
 maui-devflow cdp snapshot
