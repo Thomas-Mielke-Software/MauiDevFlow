@@ -1,0 +1,66 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0-android;net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
+    <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net10.0-windows10.0.19041.0</TargetFrameworks>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <IsPackable>true</IsPackable>
+
+    <!--
+      This library has no .razor files and no static web assets of its own.
+      The WebView dependency provides blazor.webview.js / blazor.modules.json,
+      but consumers already get those from their own WebView reference.
+      These properties (documented in Microsoft.NET.Sdk.StaticWebAssets.Pack.targets)
+      disable the auto-generated .props files that would register duplicate assets.
+    -->
+    <DisableStaticWebAssetsBuildPropsFileGeneration>true</DisableStaticWebAssetsBuildPropsFileGeneration>
+    <DisableStaticWebAssetEndpointsBuildPropsFileGeneration>true</DisableStaticWebAssetEndpointsBuildPropsFileGeneration>
+    <StaticWebAssetsDisableProjectBuildPropsFileGeneration>true</StaticWebAssetsDisableProjectBuildPropsFileGeneration>
+    <StaticWebAssetsDisableProjectBuildMultiTargetingPropsFileGeneration>true</StaticWebAssetsDisableProjectBuildMultiTargetingPropsFileGeneration>
+    <StaticWebAssetsDisableProjectBuildTransitivePropsFileGeneration>true</StaticWebAssetsDisableProjectBuildTransitivePropsFileGeneration>
+
+    <!-- NuGet Package Metadata -->
+    <PackageId>MauiDevFlow.Blazor</PackageId>
+    <Description>Enable browser developer tools and Playwright MCP automation for .NET MAUI Blazor Hybrid apps. Connects Chrome DevTools Protocol to BlazorWebView via Chobitsu.</Description>
+    <PackageTags>maui;blazor;debugging;devtools;cdp;playwright;mcp;automation</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Embed chobitsu.js as an embedded resource (fallback for injection) -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\chobitsu.js" LogicalName="MauiDevFlow.Blazor.chobitsu.js" />
+  </ItemGroup>
+
+  <!-- Embed JS/HTML scripts as resources to avoid inline strings in C# -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\Scripts\*.js" />
+    <EmbeddedResource Include="Resources\Scripts\*.html" />
+  </ItemGroup>
+
+  <!-- Pack .targets and chobitsu.js content into NuGet so consuming apps get wwwroot/js/chobitsu.js automatically -->
+  <ItemGroup>
+    <None Include="build\MauiDevFlow.Blazor.targets" Pack="true" PackagePath="build\" />
+    <None Include="content\wwwroot\js\chobitsu.js" Pack="true" PackagePath="content\wwwroot\js\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!-- Exclude all static web assets from being packed as content files.
+       The only static web assets in this project come from the WebView dependency;
+       consumers get those from their own reference. Uses the SDK's own exclusion mechanism
+       (see _PackStaticWebAssetCandidates in Microsoft.NET.Sdk.StaticWebAssets.Pack.targets). -->
+  <Target Name="_ExcludeAllStaticWebAssetsFromPack" BeforeTargets="GenerateStaticWebAssetsPackFiles">
+    <ItemGroup>
+      <_StaticWebAssetExcludedFromPack Include="@(StaticWebAsset)" />
+    </ItemGroup>
+  </Target>
+
+</Project>

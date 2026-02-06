@@ -1,0 +1,28 @@
+<Project>
+  <!-- 
+    Auto-include chobitsu.js into consuming app's wwwroot/js/ at build time.
+    This file is imported automatically when the MauiDevFlow.Blazor NuGet package is referenced.
+    Only included in Debug builds since MauiDevFlow is a development-only tool.
+    
+    Copies the file into wwwroot/js/ so the Razor SDK's static web asset pipeline
+    discovers it and handles platform-specific bundling (iOS bundle, Android assets, etc.).
+  -->
+  <PropertyGroup>
+    <_ChobitsuJsSource>$(MSBuildThisFileDirectory)..\content\wwwroot\js\chobitsu.js</_ChobitsuJsSource>
+    <_ChobitsuJsDest>$(MSBuildProjectDirectory)\wwwroot\js\chobitsu.js</_ChobitsuJsDest>
+  </PropertyGroup>
+
+  <Target Name="_CopyChobitsuToWwwroot"
+          BeforeTargets="StaticWebAssetsPrepareForRun;Build"
+          Condition="'$(Configuration)' == 'Debug' AND Exists('$(_ChobitsuJsSource)')">
+    <MakeDir Directories="$(MSBuildProjectDirectory)\wwwroot\js" />
+    <Copy SourceFiles="$(_ChobitsuJsSource)"
+          DestinationFiles="$(_ChobitsuJsDest)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="_CleanChobitsuFromWwwroot" AfterTargets="Clean"
+          Condition="Exists('$(_ChobitsuJsDest)')">
+    <Delete Files="$(_ChobitsuJsDest)" />
+  </Target>
+</Project>

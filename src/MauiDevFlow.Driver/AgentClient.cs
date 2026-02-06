@@ -1,0 +1,188 @@
+using System.Text;
+using System.Text.Json;
+
+namespace MauiDevFlow.Driver;
+
+/// <summary>
+/// HTTP client that communicates with the MauiDevFlow Agent running inside the MAUI app.
+/// </summary>
+public class AgentClient : IDisposable
+{
+    private readonly HttpClient _http;
+    private readonly string _baseUrl;
+    private bool _disposed;
+
+    public string BaseUrl => _baseUrl;
+
+    public AgentClient(string host = "localhost", int port = 9223)
+    {
+        _baseUrl = $"http://{host}:{port}";
+        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+    }
+
+    /// <summary>
+    /// Check if the agent is reachable.
+    /// </summary>
+    public async Task<AgentStatus?> GetStatusAsync()
+    {
+        var response = await GetAsync<AgentStatus>("/api/status");
+        return response;
+    }
+
+    /// <summary>
+    /// Get the visual tree from the running app.
+    /// </summary>
+    public async Task<List<ElementInfo>> GetTreeAsync(int maxDepth = 0)
+    {
+        var url = maxDepth > 0 ? $"/api/tree?depth={maxDepth}" : "/api/tree";
+        return await GetAsync<List<ElementInfo>>(url) ?? new();
+    }
+
+    /// <summary>
+    /// Get a single element by ID.
+    /// </summary>
+    public async Task<ElementInfo?> GetElementAsync(string id)
+    {
+        return await GetAsync<ElementInfo>($"/api/element/{id}");
+    }
+
+    /// <summary>
+    /// Query elements by type, automationId, and/or text.
+    /// </summary>
+    public async Task<List<ElementInfo>> QueryAsync(string? type = null, string? automationId = null, string? text = null)
+    {
+        var queryParts = new List<string>();
+        if (type != null) queryParts.Add($"type={Uri.EscapeDataString(type)}");
+        if (automationId != null) queryParts.Add($"automationId={Uri.EscapeDataString(automationId)}");
+        if (text != null) queryParts.Add($"text={Uri.EscapeDataString(text)}");
+
+        var url = $"/api/query?{string.Join("&", queryParts)}";
+        return await GetAsync<List<ElementInfo>>(url) ?? new();
+    }
+
+    /// <summary>
+    /// Tap an element.
+    /// </summary>
+    public async Task<bool> TapAsync(string elementId)
+    {
+        return await PostActionAsync("/api/action/tap", new { elementId });
+    }
+
+    /// <summary>
+    /// Fill text into an element.
+    /// </summary>
+    public async Task<bool> FillAsync(string elementId, string text)
+    {
+        return await PostActionAsync("/api/action/fill", new { elementId, text });
+    }
+
+    /// <summary>
+    /// Clear text from an element.
+    /// </summary>
+    public async Task<bool> ClearAsync(string elementId)
+    {
+        return await PostActionAsync("/api/action/clear", new { elementId });
+    }
+
+    /// <summary>
+    /// Focus an element.
+    /// </summary>
+    public async Task<bool> FocusAsync(string elementId)
+    {
+        return await PostActionAsync("/api/action/focus", new { elementId });
+    }
+
+    /// <summary>
+    /// Navigate to a Shell route.
+    /// </summary>
+    public async Task<bool> NavigateAsync(string route)
+    {
+        return await PostActionAsync("/api/action/navigate", new { route });
+    }
+
+    /// <summary>
+    /// Take a screenshot (returns PNG bytes).
+    /// </summary>
+    public async Task<byte[]?> ScreenshotAsync()
+    {
+        try
+        {
+            var response = await _http.GetAsync($"{_baseUrl}/api/screenshot");
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadAsByteArrayAsync();
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Get a specific property value from an element.
+    /// </summary>
+    public async Task<string?> GetPropertyAsync(string elementId, string propertyName)
+    {
+        var result = await GetJsonAsync($"/api/property/{elementId}/{propertyName}");
+        if (result.ValueKind == JsonValueKind.Object && result.TryGetProperty("value", out var val))
+            return val.GetString();
+        return null;
+    }
+
+    private async Task<T?> GetAsync<T>(string path) where T : class
+    {
+        try
+        {
+            var response = await _http.GetStringAsync($"{_baseUrl}{path}");
+            return JsonSerializer.Deserialize<T>(response);
+        }
+        catch { return null; }
+    }
+
+    private async Task<JsonElement> GetJsonAsync(string path)
+    {
+        try
+        {
+            var response = await _http.GetStringAsync($"{_baseUrl}{path}");
+            return JsonSerializer.Deserialize<JsonElement>(response);
+        }
+        catch { return default; }
+    }
+
+    private async Task<bool> PostActionAsync(string path, object body)
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(body);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var response = await _http.PostAsync($"{_baseUrl}{path}", content);
+            if (!response.IsSuccessStatusCode) return false;
+
+            var responseBody = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<JsonElement>(responseBody);
+            return result.TryGetProperty("success", out var success) && success.GetBoolean();
+        }
+        catch { return false; }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _http.Dispose();
+    }
+}
+
+public class AgentStatus
+{
+    [System.Text.Json.Serialization.JsonPropertyName("agent")]
+    public string? Agent { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("version")]
+    public string? Version { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("platform")]
+    public string? Platform { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("deviceType")]
+    public string? DeviceType { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("idiom")]
+    public string? Idiom { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("appName")]
+    public string? AppName { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("running")]
+    public bool Running { get; set; }
+}
