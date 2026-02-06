@@ -29,30 +29,22 @@
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
-  <!-- Remove WebView's _framework/ assets from our static web assets manifest.
-       Without this, consumers get duplicate blazor.webview.js — one from our library
-       (transitive via WebView dependency) and one from their own WebView reference.
-       We only want our own wwwroot assets (chobitsu.js and the JS initializer).
-       Runs after assets are resolved but before manifests are written. -->
+  <!-- Workaround: PrivateAssets="all" on the WebView PackageReference does NOT prevent its
+       _framework/ static web assets (blazor.webview.js, blazor.modules.json) from leaking
+       into our library's SWA manifest. When consumers also reference WebView directly (as all
+       MAUI Blazor apps do), they get a "Conflicting assets with the same target path" build error.
+       This is a known SDK limitation: https://github.com/dotnet/maui/issues/25999
+       Until the SDK properly respects PrivateAssets for static web assets, we strip _framework/
+       entries from our manifest so only our own assets (chobitsu.js) propagate to consumers. -->
   <Target Name="_RemoveTransitiveWebViewAssets"
-          AfterTargets="ResolveBuildStaticWebAssets"
-          BeforeTargets="GenerateStaticWebAssetsManifest">
+          AfterTargets="ResolveBuildStaticWebAssets;ResolveAllPublishStaticWebAssets"
+          BeforeTargets="GenerateStaticWebAssetsManifest;GenerateStaticWebAssetsPublishManifest">
     <ItemGroup>
       <StaticWebAsset Remove="@(StaticWebAsset)"
         Condition="$([System.String]::Copy('%(RelativePath)').StartsWith('_framework/'))" />
     </ItemGroup>
   </Target>
 
-  <Target Name="_RemoveTransitiveWebViewPublishAssets"
-          AfterTargets="ResolveAllPublishStaticWebAssets"
-          BeforeTargets="GenerateStaticWebAssetsPublishManifest">
-    <ItemGroup>
-      <StaticWebAsset Remove="@(StaticWebAsset)"
-        Condition="$([System.String]::Copy('%(RelativePath)').StartsWith('_framework/'))" />
-    </ItemGroup>
-  </Target>
-
-  <!-- Also exclude WebView assets from NuGet pack — only pack our own assets. -->
   <Target Name="_ExcludeWebViewStaticWebAssetsFromPack" BeforeTargets="GenerateStaticWebAssetsPackFiles">
     <ItemGroup>
       <_StaticWebAssetExcludedFromPack Include="@(StaticWebAsset)"
