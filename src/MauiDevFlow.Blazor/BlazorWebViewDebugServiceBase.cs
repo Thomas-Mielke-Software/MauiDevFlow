@@ -105,14 +105,26 @@ public abstract class BlazorWebViewDebugServiceBase : IDisposable
             return;
         }
 
-        // Wait for chobitsu to be available (loaded via <script> tag in index.html)
-        for (int i = 0; i < 30; i++)
+        // Check if chobitsu is already loaded (e.g. via <script> tag in index.html)
+        var check = await EvaluateJavaScriptAsync(
+            "typeof chobitsu !== 'undefined' ? 'loaded' : 'waiting'");
+        Log($"[BlazorDevFlow] Chobitsu check: {check}");
+
+        if (check?.ToString() != "loaded")
         {
-            var check = await EvaluateJavaScriptAsync(
-                "typeof chobitsu !== 'undefined' ? 'loaded' : 'waiting'");
-            Log($"[BlazorDevFlow] Chobitsu check #{i}: {check}");
-            if (check?.ToString() == "loaded") break;
-            await Task.Delay(500);
+            // Inject chobitsu.js from embedded resource
+            Log("[BlazorDevFlow] Chobitsu not found, injecting from embedded resource...");
+            try
+            {
+                var chobitsuJs = ChobitsuDebugScript.GetEmbeddedChobitsuJs();
+                await EvaluateJavaScriptAsync(chobitsuJs);
+                Log("[BlazorDevFlow] Chobitsu injected from embedded resource");
+            }
+            catch (Exception ex)
+            {
+                LogError("[BlazorDevFlow] Failed to inject chobitsu.js", ex);
+                return;
+            }
         }
 
         var script = ChobitsuDebugScript.GetInjectionScript(_bridge.Port);

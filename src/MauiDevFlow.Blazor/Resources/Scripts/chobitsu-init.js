@@ -12,7 +12,7 @@
     window.__chobitsuOutgoingQueue = [];
     
     if (typeof chobitsu === 'undefined') {
-        console.error('[ChobitsuDebug] chobitsu not found. Add <script src="js/chobitsu.js"></script> to your index.html');
+        console.error('[ChobitsuDebug] chobitsu not found after injection attempt');
         return;
     }
     
