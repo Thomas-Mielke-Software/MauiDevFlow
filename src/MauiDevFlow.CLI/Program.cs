@@ -922,13 +922,13 @@ class Program
     }
 
     /// <summary>
-    /// Reads the port from mauidevflow.json in the current directory.
+    /// Reads the port from .mauidevflow in the current directory.
     /// </summary>
     private static int? ReadConfigPort()
     {
         try
         {
-            var path = Path.Combine(Directory.GetCurrentDirectory(), "mauidevflow.json");
+            var path = Path.Combine(Directory.GetCurrentDirectory(), ".mauidevflow");
             if (!File.Exists(path)) return null;
 
             var json = File.ReadAllText(path);

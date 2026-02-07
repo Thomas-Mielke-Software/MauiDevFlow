@@ -1,13 +1,13 @@
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <!--
-    Reads port from mauidevflow.json in the project directory, or from -p:MauiDevFlowPort.
+    Reads port from .mauidevflow in the project directory, or from -p:MauiDevFlowPort.
     CLI override (-p:MauiDevFlowPort=9225) takes priority over the config file.
     If neither is set, the agent uses its default port (9223).
   -->
   <Target Name="_ReadMauiDevFlowConfig" BeforeTargets="_SetMauiDevFlowPort"
-          Condition="'$(MauiDevFlowPort)' == '' AND Exists('$(MSBuildProjectDirectory)/mauidevflow.json')">
+          Condition="'$(MauiDevFlowPort)' == '' AND Exists('$(MSBuildProjectDirectory)/.mauidevflow')">
     <PropertyGroup>
-      <_MauiDevFlowConfigContent>$([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)/mauidevflow.json'))</_MauiDevFlowConfigContent>
+      <_MauiDevFlowConfigContent>$([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)/.mauidevflow'))</_MauiDevFlowConfigContent>
       <_MauiDevFlowConfigPort>$([System.Text.RegularExpressions.Regex]::Match($(_MauiDevFlowConfigContent), '"port"\s*:\s*(\d+)').Groups[1].Value)</_MauiDevFlowConfigPort>
       <MauiDevFlowPort Condition="'$(_MauiDevFlowConfigPort)' != ''">$(_MauiDevFlowConfigPort)</MauiDevFlowPort>
     </PropertyGroup>

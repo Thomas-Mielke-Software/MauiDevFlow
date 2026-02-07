@@ -46,13 +46,13 @@ builder.AddMauiBlazorDevFlowTools(); // Blazor Hybrid only
 ```
 
 **Agent options:**
-- `Port` — HTTP port for the agent REST API (default: 9223). Also configurable via `mauidevflow.json` or `-p:MauiDevFlowPort=XXXX`.
+- `Port` — HTTP port for the agent REST API (default: 9223). Also configurable via `.mauidevflow` or `-p:MauiDevFlowPort=XXXX`.
 - `Enabled` — Enable/disable the agent (default: true)
 - `MaxTreeDepth` — Max depth for visual tree queries, 0 = unlimited (default: 0)
 
-## 3b. Port Configuration (mauidevflow.json)
+## 3b. Port Configuration (.mauidevflow)
 
-Create a `mauidevflow.json` file in the project directory to set a custom port. Pick a random
+Create a `.mauidevflow` file in the project directory to set a custom port. Pick a random
 port between 9223–9899 to avoid collisions with other projects:
 
 ```json
@@ -68,7 +68,7 @@ Both the MSBuild targets and the CLI read this file automatically:
 No `-p:MauiDevFlowPort` or `--agent-port` flags needed. This file should be committed to
 source control so all developers and CI agents use the same port.
 
-**Port priority:** Code-set `options.Port` > `-p:MauiDevFlowPort` > `mauidevflow.json` > default 9223.
+**Port priority:** Code-set `options.Port` > `-p:MauiDevFlowPort` > `.mauidevflow` > default 9223.
 
 **Blazor options:**
 - `Enabled` — Enable/disable CDP support (default: true)
@@ -185,7 +185,7 @@ adb reverse tcp:9223 tcp:9223    # Agent + CDP (single port)
 ```
 
 This is needed because the emulator runs in its own network namespace. Physical devices
-connected via USB also need this. If using a custom port (via `mauidevflow.json` or
+connected via USB also need this. If using a custom port (via `.mauidevflow` or
 `-p:MauiDevFlowPort=9347`), forward that port instead: `adb reverse tcp:9347 tcp:9347`.
 
 ## 7. Verify Setup
@@ -199,9 +199,11 @@ maui-devflow cdp status           # Should show "Connected" (Blazor Hybrid only)
 
 If status commands fail:
 - **Mac Catalyst:** Check entitlements (Step 5)
-- **Android:** Check port forwarding (Step 6)
+- **Android:** Check port forwarding (Step 6) — re-run `adb reverse` after each deploy
 - **iOS Simulator:** Should work without extra config
 - **All platforms:** Ensure the app is running and the `#if DEBUG` block is active
+- **Port conflict:** Check if another process holds the port: `lsof -i :9223` (or your configured port)
+- **Wrong port:** Ensure CLI is run from the project directory so it reads `.mauidevflow`
 
 ## Quick Checklist
 
