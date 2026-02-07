@@ -1,6 +1,8 @@
 using System.Text.Json;
+using System.Reflection;
 using Microsoft.Maui;
 using Microsoft.Maui.Controls;
+using Microsoft.Maui.Controls.Internals;
 using Microsoft.Maui.Dispatching;
 using MauiDevFlow.Agent.Logging;
 
@@ -125,8 +127,8 @@ public class DevFlowAgentService : IDisposable
         var element = await DispatchAsync(() =>
         {
             var el = _treeWalker.GetElementById(id, _app);
-            if (el == null) return null;
-            return _treeWalker.WalkElement(el, null, 1, 2);
+            if (el is not IVisualTreeElement vte) return null;
+            return _treeWalker.WalkElement(vte, null, 1, 2);
         });
 
         return element != null ? HttpResponse.Json(element) : HttpResponse.NotFound($"Element '{id}' not found");
@@ -316,6 +318,9 @@ public class DevFlowAgentService : IDisposable
                 case Button btn:
                     btn.SendClicked();
                     return "ok";
+                case ImageButton imgBtn:
+                    imgBtn.SendClicked();
+                    return "ok";
                 case CheckBox cb:
                     cb.IsChecked = !cb.IsChecked;
                     return "ok";
@@ -324,6 +329,21 @@ public class DevFlowAgentService : IDisposable
                     return "ok";
                 case RadioButton rb:
                     rb.IsChecked = true;
+                    return "ok";
+                case ToolbarItem ti:
+                    ((IMenuItemController)ti).Activate();
+                    return "ok";
+                case MenuItem mi:
+                    ((IMenuItemController)mi).Activate();
+                    return "ok";
+                case Picker picker:
+                    picker.Focus();
+                    return "ok";
+                case DatePicker datePicker:
+                    datePicker.Focus();
+                    return "ok";
+                case TimePicker timePicker:
+                    timePicker.Focus();
                     return "ok";
                 case Page page when page.Parent is TabbedPage tabbed:
                     tabbed.CurrentPage = page;
@@ -340,19 +360,93 @@ public class DevFlowAgentService : IDisposable
                         Shell.Current.CurrentItem = ss;
                     return "ok";
                 case IView view when view is View v:
+                    // Try TapGestureRecognizer: Command first, then Tapped event via reflection
                     var tapGesture = v.GestureRecognizers.OfType<TapGestureRecognizer>().FirstOrDefault();
-                    if (tapGesture?.Command != null)
+                    if (tapGesture != null)
                     {
-                        tapGesture.Command.Execute(tapGesture.CommandParameter);
-                        return "ok";
+                        if (tapGesture.Command != null)
+                        {
+                            tapGesture.Command.Execute(tapGesture.CommandParameter);
+                            return "ok";
+                        }
+                        // Fire the Tapped event via reflection (SendTapped is internal)
+                        if (TryInvokeTapped(tapGesture, v))
+                            return "ok";
+                        return $"TapGestureRecognizer found but SendTapped reflection failed on {el.GetType().FullName}";
                     }
-                    return $"No tap gesture on {el.GetType().FullName}";
+
+                    // Native platform fallback for UIControl/Android.Views.View
+                    if (v is VisualElement nativeVe && TryNativeTap(nativeVe))
+                        return "ok";
+
+                    return $"No tap handler on {el.GetType().FullName} (gestures:{v.GestureRecognizers.Count}, type:{v.GetType().Name})";
                 default:
                     return $"Unhandled type: {el.GetType().FullName}";
             }
         });
 
         return result == "ok" ? HttpResponse.Ok("Tapped") : HttpResponse.Error(result);
+    }
+
+    /// <summary>
+    /// Invokes the Tapped event on a TapGestureRecognizer via reflection.
+    /// Calls internal SendTapped(View sender, Func&lt;IElement?, Point?&gt;? getPosition) method.
+    /// </summary>
+    private static bool TryInvokeTapped(TapGestureRecognizer tapGesture, View sender)
+    {
+        try
+        {
+            // SendTapped is internal on TapGestureRecognizer itself
+            var sendTapped = typeof(TapGestureRecognizer).GetMethod("SendTapped",
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            if (sendTapped != null)
+            {
+                var paramCount = sendTapped.GetParameters().Length;
+                var args = paramCount switch
+                {
+                    0 => Array.Empty<object>(),
+                    1 => new object[] { sender },
+                    _ => new object?[] { sender, null }
+                };
+                sendTapped.Invoke(tapGesture, args);
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[MauiDevFlow] TryInvokeTapped failed: {ex.GetBaseException().Message}");
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Attempts to tap a native platform view as a fallback.
+    /// iOS: UIControl.SendActionForControlEvents(.TouchUpInside)
+    /// Android: View.PerformClick()
+    /// </summary>
+    private static bool TryNativeTap(VisualElement ve)
+    {
+        try
+        {
+            var platformView = ve.Handler?.PlatformView;
+            if (platformView == null) return false;
+
+#if IOS || MACCATALYST
+            if (platformView is UIKit.UIControl control)
+            {
+                control.SendActionForControlEvents(UIKit.UIControlEvent.TouchUpInside);
+                return true;
+            }
+#elif ANDROID
+            if (platformView is Android.Views.View androidView && androidView.Clickable)
+            {
+                androidView.PerformClick();
+                return true;
+            }
+#endif
+        }
+        catch { }
+        return false;
     }
 
     private async Task<HttpResponse> HandleFill(HttpRequest request)

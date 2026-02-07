@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="SampleMauiApp.InteractionTestPage"
+             Title="Interaction Tests">
+    <ContentPage.BackgroundColor>
+        <AppThemeBinding Light="#F5F5F5" Dark="#1C1B1F" />
+    </ContentPage.BackgroundColor>
+
+    <ContentPage.ToolbarItems>
+        <ToolbarItem Text="Action1" AutomationId="ToolbarAction1" Clicked="OnToolbarAction1" />
+        <ToolbarItem Text="Action2" AutomationId="ToolbarAction2" Clicked="OnToolbarAction2" />
+    </ContentPage.ToolbarItems>
+
+    <ScrollView Padding="16">
+        <VerticalStackLayout Spacing="12">
+
+            <!-- Status label to verify interactions -->
+            <Label x:Name="StatusLabel"
+                   Text="last action: none"
+                   FontSize="14"
+                   FontAttributes="Italic"
+                   AutomationId="StatusLabel">
+                <Label.TextColor>
+                    <AppThemeBinding Light="#49454F" Dark="#CAC4D0" />
+                </Label.TextColor>
+            </Label>
+
+            <!-- Grid with TapGestureRecognizer using Command -->
+            <Border StrokeShape="RoundRectangle 8" Padding="16" AutomationId="CommandTapBorder">
+                <Border.BackgroundColor>
+                    <AppThemeBinding Light="#E8DEF8" Dark="#4A4458" />
+                </Border.BackgroundColor>
+                <Grid AutomationId="CommandTapGrid">
+                    <Grid.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding TapCommand}" CommandParameter="CommandTap" />
+                    </Grid.GestureRecognizers>
+                    <Label Text="Tap me (Command binding)"
+                           HorizontalOptions="Center" VerticalOptions="Center"
+                           FontSize="16">
+                        <Label.TextColor>
+                            <AppThemeBinding Light="#1C1B1F" Dark="#E6E1E5" />
+                        </Label.TextColor>
+                    </Label>
+                </Grid>
+            </Border>
+
+            <!-- Grid with TapGestureRecognizer using Tapped event (NO command) -->
+            <Border StrokeShape="RoundRectangle 8" Padding="16" AutomationId="EventTapBorder">
+                <Border.BackgroundColor>
+                    <AppThemeBinding Light="#D0BCFF" Dark="#6750A4" />
+                </Border.BackgroundColor>
+                <Grid AutomationId="EventTapGrid">
+                    <Grid.GestureRecognizers>
+                        <TapGestureRecognizer Tapped="OnEventTapGridTapped" />
+                    </Grid.GestureRecognizers>
+                    <Label Text="Tap me (Tapped event only)"
+                           HorizontalOptions="Center" VerticalOptions="Center"
+                           FontSize="16">
+                        <Label.TextColor>
+                            <AppThemeBinding Light="#1C1B1F" Dark="#FFFFFF" />
+                        </Label.TextColor>
+                    </Label>
+                </Grid>
+            </Border>
+
+            <!-- ImageButton -->
+            <ImageButton Source="dotnet_bot.png"
+                         HeightRequest="60" WidthRequest="60"
+                         HorizontalOptions="Center"
+                         AutomationId="TestImageButton"
+                         Clicked="OnImageButtonClicked" />
+
+            <!-- Picker -->
+            <Picker x:Name="TestPicker"
+                    Title="Pick an option"
+                    AutomationId="TestPicker"
+                    SelectedIndexChanged="OnPickerChanged">
+                <Picker.ItemsSource>
+                    <x:Array Type="{x:Type x:String}">
+                        <x:String>Option A</x:String>
+                        <x:String>Option B</x:String>
+                        <x:String>Option C</x:String>
+                    </x:Array>
+                </Picker.ItemsSource>
+            </Picker>
+
+            <!-- Regular button for baseline -->
+            <Button Text="Test Button"
+                    AutomationId="TestButton"
+                    Clicked="OnTestButtonClicked">
+                <Button.BackgroundColor>
+                    <AppThemeBinding Light="#6750A4" Dark="#D0BCFF" />
+                </Button.BackgroundColor>
+                <Button.TextColor>
+                    <AppThemeBinding Light="#FFFFFF" Dark="#381E72" />
+                </Button.TextColor>
+            </Button>
+
+            <!-- CheckBox -->
+            <HorizontalStackLayout Spacing="8">
+                <CheckBox AutomationId="TestCheckBox" CheckedChanged="OnCheckBoxChanged" />
+                <Label Text="Test CheckBox" VerticalOptions="Center">
+                    <Label.TextColor>
+                        <AppThemeBinding Light="#1C1B1F" Dark="#E6E1E5" />
+                    </Label.TextColor>
+                </Label>
+            </HorizontalStackLayout>
+
+            <!-- Switch -->
+            <HorizontalStackLayout Spacing="8">
+                <Switch AutomationId="TestSwitch" Toggled="OnSwitchToggled" />
+                <Label Text="Test Switch" VerticalOptions="Center">
+                    <Label.TextColor>
+                        <AppThemeBinding Light="#1C1B1F" Dark="#E6E1E5" />
+                    </Label.TextColor>
+                </Label>
+            </HorizontalStackLayout>
+
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

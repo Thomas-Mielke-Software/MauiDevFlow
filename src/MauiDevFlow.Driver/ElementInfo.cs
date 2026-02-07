@@ -40,6 +40,15 @@ public class ElementInfo
     [JsonPropertyName("bounds")]
     public BoundsInfo? Bounds { get; set; }
 
+    [JsonPropertyName("gestures")]
+    public List<string>? Gestures { get; set; }
+
+    [JsonPropertyName("nativeType")]
+    public string? NativeType { get; set; }
+
+    [JsonPropertyName("nativeProperties")]
+    public Dictionary<string, string?>? NativeProperties { get; set; }
+
     [JsonPropertyName("children")]
     public List<ElementInfo>? Children { get; set; }
 }

@@ -9,5 +9,7 @@
                   ContentTemplate="{DataTemplate local:MainPage}" />
     <ShellContent Title="Blazor" Route="blazor"
                   ContentTemplate="{DataTemplate local:BlazorTodoPage}" />
+    <ShellContent Title="Interactions" Route="interactions"
+                  ContentTemplate="{DataTemplate local:InteractionTestPage}" />
 
 </Shell>

@@ -8,28 +8,35 @@ namespace MauiDevFlow.Agent;
 /// Walks the MAUI visual tree and produces ElementInfo representations.
 /// Uses IVisualTreeElement.GetVisualChildren() for tree traversal.
 /// Maintains a session-scoped element ID dictionary for stable references.
+/// Also maps non-visual elements (ToolbarItems, MenuItems) for interaction.
 /// </summary>
 public class VisualTreeWalker
 {
     private readonly ConcurrentDictionary<string, WeakReference<IVisualTreeElement>> _elementMap = new();
     private readonly ConcurrentDictionary<IVisualTreeElement, string> _reverseMap = new(ReferenceEqualityComparer.Instance);
+    private readonly ConcurrentDictionary<string, WeakReference<object>> _objectMap = new();
 
     /// <summary>
     /// Looks up a previously-mapped element by its ID.
+    /// Returns IVisualTreeElement, ToolbarItem, or other mapped objects.
     /// </summary>
-    public IVisualTreeElement? GetElementById(string id)
+    public object? GetElementById(string id)
     {
         if (_elementMap.TryGetValue(id, out var weakRef) && weakRef.TryGetTarget(out var element))
             return element;
 
+        if (_objectMap.TryGetValue(id, out var objRef) && objRef.TryGetTarget(out var obj))
+            return obj;
+
         _elementMap.TryRemove(id, out _);
+        _objectMap.TryRemove(id, out _);
         return null;
     }
 
     /// <summary>
     /// Looks up an element by ID, re-walking the tree if not found.
     /// </summary>
-    public IVisualTreeElement? GetElementById(string id, Application? app)
+    public object? GetElementById(string id, Application? app)
     {
         var el = GetElementById(id);
         if (el != null || app == null) return el;
@@ -44,7 +51,7 @@ public class VisualTreeWalker
     /// </summary>
     public string GetDiagnostics()
     {
-        return $"Map has {_elementMap.Count} entries. Keys: [{string.Join(", ", _elementMap.Keys.Take(20))}]";
+        return $"Map has {_elementMap.Count + _objectMap.Count} entries. Keys: [{string.Join(", ", _elementMap.Keys.Concat(_objectMap.Keys).Take(20))}]";
     }
 
     /// <summary>
@@ -77,17 +84,28 @@ public class VisualTreeWalker
         if (maxDepth > 0 && currentDepth >= maxDepth)
             return info;
 
+        info.Children ??= new List<ElementInfo>();
+
         var children = element.GetVisualChildren();
-        if (children.Count > 0)
+        foreach (var child in children)
         {
-            info.Children = new List<ElementInfo>();
-            foreach (var child in children)
+            var childInfo = WalkElement(child, id, currentDepth + 1, maxDepth);
+            if (childInfo != null)
+                info.Children.Add(childInfo);
+        }
+
+        // Add ToolbarItems as synthetic children of Pages
+        if (element is Page page && page.ToolbarItems.Count > 0)
+        {
+            foreach (var toolbarItem in page.ToolbarItems)
             {
-                var childInfo = WalkElement(child, id, currentDepth + 1, maxDepth);
-                if (childInfo != null)
-                    info.Children.Add(childInfo);
+                var tiInfo = CreateToolbarItemInfo(toolbarItem, id);
+                info.Children.Add(tiInfo);
             }
         }
+
+        if (info.Children.Count == 0)
+            info.Children = null;
 
         return info;
     }
@@ -109,6 +127,25 @@ public class VisualTreeWalker
     {
         var id = GetOrCreateId(element);
         var info = CreateElementInfo(element, id, parentId);
+
+        MatchAndAdd(info, type, automationId, text, results);
+
+        foreach (var child in element.GetVisualChildren())
+            QueryRecursive(child, type, automationId, text, id, results);
+
+        // Also query ToolbarItems on Pages
+        if (element is Page page)
+        {
+            foreach (var toolbarItem in page.ToolbarItems)
+            {
+                var tiInfo = CreateToolbarItemInfo(toolbarItem, id);
+                MatchAndAdd(tiInfo, type, automationId, text, results);
+            }
+        }
+    }
+
+    private static void MatchAndAdd(ElementInfo info, string? type, string? automationId, string? text, List<ElementInfo> results)
+    {
         bool matches = true;
 
         if (type != null && !info.Type.Equals(type, StringComparison.OrdinalIgnoreCase)
@@ -123,9 +160,6 @@ public class VisualTreeWalker
 
         if (matches && (type != null || automationId != null || text != null))
             results.Add(info);
-
-        foreach (var child in element.GetVisualChildren())
-            QueryRecursive(child, type, automationId, text, id, results);
     }
 
     private string GetOrCreateId(IVisualTreeElement element)
@@ -139,10 +173,10 @@ public class VisualTreeWalker
         {
             id = ve.AutomationId;
             // Ensure uniqueness by appending suffix if needed
-            if (_elementMap.ContainsKey(id))
+            if (_elementMap.ContainsKey(id) || _objectMap.ContainsKey(id))
             {
                 var suffix = 1;
-                while (_elementMap.ContainsKey($"{id}_{suffix}"))
+                while (_elementMap.ContainsKey($"{id}_{suffix}") || _objectMap.ContainsKey($"{id}_{suffix}"))
                     suffix++;
                 id = $"{id}_{suffix}";
             }
@@ -155,6 +189,52 @@ public class VisualTreeWalker
         _elementMap[id] = new WeakReference<IVisualTreeElement>(element);
         _reverseMap[element] = id;
         return id;
+    }
+
+    private string GetOrCreateObjectId(object element, string? automationId)
+    {
+        // Check if we already have an ID for this object
+        foreach (var kvp in _objectMap)
+        {
+            if (kvp.Value.TryGetTarget(out var existing) && ReferenceEquals(existing, element))
+                return kvp.Key;
+        }
+
+        string id;
+        if (!string.IsNullOrEmpty(automationId))
+        {
+            id = automationId;
+            if (_elementMap.ContainsKey(id) || _objectMap.ContainsKey(id))
+            {
+                var suffix = 1;
+                while (_elementMap.ContainsKey($"{id}_{suffix}") || _objectMap.ContainsKey($"{id}_{suffix}"))
+                    suffix++;
+                id = $"{id}_{suffix}";
+            }
+        }
+        else
+        {
+            id = Guid.NewGuid().ToString("N")[..12];
+        }
+
+        _objectMap[id] = new WeakReference<object>(element);
+        return id;
+    }
+
+    private ElementInfo CreateToolbarItemInfo(ToolbarItem item, string parentId)
+    {
+        var id = GetOrCreateObjectId(item, item.AutomationId);
+        return new ElementInfo
+        {
+            Id = id,
+            ParentId = parentId,
+            Type = "ToolbarItem",
+            FullType = item.GetType().FullName ?? "Microsoft.Maui.Controls.ToolbarItem",
+            AutomationId = item.AutomationId,
+            Text = item.Text,
+            IsVisible = true,
+            IsEnabled = item.IsEnabled,
+        };
     }
 
     private static ElementInfo CreateElementInfo(IVisualTreeElement element, string id, string? parentId)
@@ -181,9 +261,12 @@ public class VisualTreeWalker
                 Width = ve.Frame.Width,
                 Height = ve.Frame.Height
             };
+
+            // Populate native view info from handler
+            PopulateNativeInfo(info, ve);
         }
 
-        // Extract text from common controls
+        // Extract text from common controls (including Shell elements)
         info.Text = element switch
         {
             Label l => l.Text,
@@ -192,11 +275,80 @@ public class VisualTreeWalker
             Editor ed => ed.Text,
             SearchBar sb => sb.Text,
             Span s => s.Text,
-            _ => (element as VisualElement)?.GetValue(VisualElement.AutomationIdProperty) is string aid
-                 ? null : null
+            BaseShellItem si => si.Title,
+            _ => null
         };
 
+        // Populate gesture recognizer metadata
+        if (element is View view && view.GestureRecognizers.Count > 0)
+        {
+            var gestures = new List<string>();
+            foreach (var gr in view.GestureRecognizers)
+            {
+                var name = gr switch
+                {
+                    TapGestureRecognizer => "tap",
+                    SwipeGestureRecognizer => "swipe",
+                    PanGestureRecognizer => "pan",
+                    PinchGestureRecognizer => "pinch",
+                    PointerGestureRecognizer => "pointer",
+                    DragGestureRecognizer => "drag",
+                    DropGestureRecognizer => "drop",
+                    _ => gr.GetType().Name.Replace("GestureRecognizer", "").ToLowerInvariant()
+                };
+                if (!gestures.Contains(name))
+                    gestures.Add(name);
+            }
+            if (gestures.Count > 0)
+                info.Gestures = gestures;
+        }
+
         return info;
+    }
+
+    private static void PopulateNativeInfo(ElementInfo info, VisualElement ve)
+    {
+        try
+        {
+            var platformView = ve.Handler?.PlatformView;
+            if (platformView == null) return;
+
+            info.NativeType = platformView.GetType().FullName;
+
+#if IOS || MACCATALYST
+            if (platformView is UIKit.UIView uiView)
+            {
+                var props = new Dictionary<string, string?>();
+                if (!string.IsNullOrEmpty(uiView.AccessibilityIdentifier))
+                    props["accessibilityIdentifier"] = uiView.AccessibilityIdentifier;
+                if (!string.IsNullOrEmpty(uiView.AccessibilityLabel))
+                    props["accessibilityLabel"] = uiView.AccessibilityLabel;
+                if (uiView is UIKit.UIControl uiControl)
+                    props["isUIControl"] = "true";
+                if (uiView is UIKit.UITextField textField)
+                    props["isSecureTextEntry"] = textField.SecureTextEntry.ToString();
+                if (props.Count > 0)
+                    info.NativeProperties = props;
+            }
+#elif ANDROID
+            if (platformView is Android.Views.View androidView)
+            {
+                var props = new Dictionary<string, string?>();
+                if (!string.IsNullOrEmpty(androidView.ContentDescription))
+                    props["contentDescription"] = androidView.ContentDescription;
+                if (androidView is Android.Widget.EditText editText)
+                    props["inputType"] = editText.InputType.ToString();
+                if (androidView.Clickable)
+                    props["clickable"] = "true";
+                if (props.Count > 0)
+                    info.NativeProperties = props;
+            }
+#endif
+        }
+        catch
+        {
+            // Native info is best-effort; don't fail the tree walk
+        }
     }
 
     /// <summary>
@@ -206,5 +358,6 @@ public class VisualTreeWalker
     {
         _elementMap.Clear();
         _reverseMap.Clear();
+        _objectMap.Clear();
     }
 }
