@@ -5,10 +5,14 @@ namespace MauiDevFlow.Agent;
 /// </summary>
 public class AgentOptions
 {
+    /// <summary>Default port when none is specified via code or MSBuild property.</summary>
+    public const int DefaultPort = 9223;
+
     /// <summary>
     /// Port for the HTTP API server. Default: 9223.
+    /// Override at build time with -p:MauiDevFlowPort=XXXX.
     /// </summary>
-    public int Port { get; set; } = 9223;
+    public int Port { get; set; } = DefaultPort;
 
     /// <summary>
     /// Whether the agent is enabled. Default: true.

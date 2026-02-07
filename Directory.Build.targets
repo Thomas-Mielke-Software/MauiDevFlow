@@ -26,4 +26,11 @@
           Condition="Exists('$(_ChobitsuJsDest)')">
     <Delete Files="$(_ChobitsuJsDest)" />
   </Target>
+
+  <!--
+    Local development: Import Agent .targets for MauiDevFlowPort MSBuild property support.
+    NuGet consumers get this automatically from the package's build/ folder.
+  -->
+  <Import Project="$(MSBuildThisFileDirectory)src\MauiDevFlow.Agent\build\Redth.MauiDevFlow.Agent.targets"
+          Condition="'$(ApplicationId)' != '' AND Exists('$(MSBuildThisFileDirectory)src\MauiDevFlow.Agent\build\Redth.MauiDevFlow.Agent.targets')" />
 </Project>

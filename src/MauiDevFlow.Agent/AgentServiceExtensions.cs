@@ -21,6 +21,14 @@ public static class AgentServiceExtensions
         var options = new AgentOptions();
         configure?.Invoke(options);
 
+        // If port wasn't explicitly set in code, check AssemblyMetadata (from -p:MauiDevFlowPort=XXXX)
+        if (options.Port == AgentOptions.DefaultPort)
+        {
+            var metaPort = ReadAssemblyMetadataPort();
+            if (metaPort.HasValue)
+                options.Port = metaPort.Value;
+        }
+
         var service = new DevFlowAgentService(options);
         builder.Services.AddSingleton(service);
 
@@ -82,5 +90,29 @@ public static class AgentServiceExtensions
         });
 
         return builder;
+    }
+
+    /// <summary>
+    /// Reads MauiDevFlowPort from AssemblyMetadataAttribute injected by the .targets file
+    /// when the app is built with -p:MauiDevFlowPort=XXXX.
+    /// </summary>
+    private static int? ReadAssemblyMetadataPort()
+    {
+        try
+        {
+            var attrs = System.Reflection.Assembly.GetEntryAssembly()?
+                .GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false);
+
+            if (attrs != null)
+            {
+                foreach (System.Reflection.AssemblyMetadataAttribute attr in attrs)
+                {
+                    if (attr.Key == "MauiDevFlowPort" && int.TryParse(attr.Value, out var port))
+                        return port;
+                }
+            }
+        }
+        catch { /* ignore reflection failures */ }
+        return null;
     }
 }
