@@ -120,6 +120,10 @@ maui-devflow MAUI screenshot --output screen.png
 # Fetch application logs
 maui-devflow MAUI logs --limit 50
 
+# Live edit native properties (no rebuild)
+maui-devflow MAUI set-property HeaderLabel TextColor "Tomato"
+maui-devflow MAUI set-property HeaderLabel FontSize "32"
+
 # Blazor WebView (if applicable)
 maui-devflow cdp status
 maui-devflow cdp snapshot
@@ -185,6 +189,7 @@ The Agent runs inside the MAUI app and exposes an HTTP/JSON REST API on port 922
 | `/api/action/focus` | POST | Focus element `{"elementId":"..."}` |
 | `/api/screenshot` | GET | PNG screenshot |
 | `/api/property/{id}/{name}` | GET | Get property value |
+| `/api/property/{id}/{name}` | POST | Set property `{"value":"..."}` |
 
 ## Project Structure
 

@@ -79,6 +79,7 @@ public class DevFlowAgentService : IDisposable
         _server.MapGet("/api/query", HandleQuery);
         _server.MapGet("/api/screenshot", HandleScreenshot);
         _server.MapGet("/api/property/{id}/{name}", HandleProperty);
+        _server.MapPost("/api/property/{id}/{name}", HandleSetProperty);
         _server.MapPost("/api/action/tap", HandleTap);
         _server.MapPost("/api/action/fill", HandleFill);
         _server.MapPost("/api/action/clear", HandleClear);
@@ -193,6 +194,108 @@ public class DevFlowAgentService : IDisposable
         return value != null
             ? HttpResponse.Json(new { id, property = propName, value })
             : HttpResponse.NotFound($"Property '{propName}' not found on element '{id}'");
+    }
+
+    private async Task<HttpResponse> HandleSetProperty(HttpRequest request)
+    {
+        if (_app == null) return HttpResponse.Error("Agent not bound to app");
+        if (!request.RouteParams.TryGetValue("id", out var id))
+            return HttpResponse.Error("Element ID required");
+        if (!request.RouteParams.TryGetValue("name", out var propName))
+            return HttpResponse.Error("Property name required");
+
+        var body = request.BodyAs<SetPropertyRequest>();
+        if (body?.Value == null)
+            return HttpResponse.Error("value is required");
+
+        var result = await DispatchAsync(() =>
+        {
+            var el = _treeWalker.GetElementById(id, _app);
+            if (el == null) return "Element not found";
+
+            var type = el.GetType();
+            var prop = type.GetProperty(propName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.IgnoreCase);
+            if (prop == null || !prop.CanWrite)
+                return $"Property '{propName}' not found or read-only";
+
+            try
+            {
+                var converted = ConvertPropertyValue(prop.PropertyType, body.Value);
+                prop.SetValue(el, converted);
+                return "ok";
+            }
+            catch (Exception ex)
+            {
+                return $"Failed to set property: {ex.Message}";
+            }
+        });
+
+        return result == "ok"
+            ? HttpResponse.Json(new { id, property = propName, value = body.Value })
+            : HttpResponse.Error(result);
+    }
+
+    private static object? ConvertPropertyValue(Type targetType, string value)
+    {
+        // Handle nullable types
+        var underlying = Nullable.GetUnderlyingType(targetType) ?? targetType;
+
+        if (underlying == typeof(string)) return value;
+        if (underlying == typeof(bool)) return bool.Parse(value);
+        if (underlying == typeof(int)) return int.Parse(value);
+        if (underlying == typeof(double)) return double.Parse(value);
+        if (underlying == typeof(float)) return float.Parse(value);
+
+        // MAUI Color - supports named colors and hex
+        if (underlying == typeof(Microsoft.Maui.Graphics.Color))
+        {
+            // Try hex format (#RRGGBB or #AARRGGBB)
+            if (value.StartsWith('#'))
+                return Microsoft.Maui.Graphics.Color.FromArgb(value);
+
+            // Try named colors via reflection on Colors class (check both properties and fields)
+            var colorsType = typeof(Microsoft.Maui.Graphics.Colors);
+            var colorProp = colorsType.GetProperty(value,
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.IgnoreCase);
+            if (colorProp != null)
+                return colorProp.GetValue(null);
+
+            var colorField = colorsType.GetField(value,
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.IgnoreCase);
+            if (colorField != null)
+                return colorField.GetValue(null);
+
+            // Try Color.FromArgb as last resort (for rgb hex without #)
+            try { return Microsoft.Maui.Graphics.Color.FromArgb($"#{value}"); }
+            catch { }
+
+            throw new ArgumentException($"Unknown color: '{value}'. Use hex (#FF6347) or a named color (Red, Blue, Green, etc.).");
+        }
+
+        // MAUI Thickness (uniform or "left,top,right,bottom")
+        if (underlying == typeof(Microsoft.Maui.Thickness))
+        {
+            var parts = value.Split(',');
+            return parts.Length switch
+            {
+                1 => new Microsoft.Maui.Thickness(double.Parse(parts[0])),
+                2 => new Microsoft.Maui.Thickness(double.Parse(parts[0]), double.Parse(parts[1])),
+                4 => new Microsoft.Maui.Thickness(double.Parse(parts[0]), double.Parse(parts[1]),
+                    double.Parse(parts[2]), double.Parse(parts[3])),
+                _ => throw new ArgumentException($"Invalid Thickness format: {value}")
+            };
+        }
+
+        // Enum types
+        if (underlying.IsEnum)
+            return Enum.Parse(underlying, value, ignoreCase: true);
+
+        // Fallback: TypeConverter
+        var converter = System.ComponentModel.TypeDescriptor.GetConverter(underlying);
+        if (converter.CanConvertFrom(typeof(string)))
+            return converter.ConvertFromString(value);
+
+        throw new ArgumentException($"Cannot convert '{value}' to {targetType.Name}");
     }
 
     private async Task<HttpResponse> HandleTap(HttpRequest request)
@@ -459,4 +562,9 @@ public class FillRequest
 public class NavigateRequest
 {
     public string? Route { get; set; }
+}
+
+public class SetPropertyRequest
+{
+    public string? Value { get; set; }
 }

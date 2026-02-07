@@ -123,6 +123,32 @@ Combine tree + property for systematic debugging: get element IDs from `tree`, t
 specific properties. This is more reliable than screenshots for verifying exact color values,
 font sizes, and layout metrics.
 
+**Live editing native MAUI elements (no rebuild needed):**
+Use `set-property` to change any writable property at runtime. Changes are immediate and
+visible — experiment with colors, sizes, text, and layout before committing to code.
+
+```bash
+# Change text
+maui-devflow MAUI set-property <id> Text "New Title"
+
+# Change colors (named colors, hex, or rgba)
+maui-devflow MAUI set-property <id> TextColor "Tomato"
+maui-devflow MAUI set-property <id> BackgroundColor "#2a1f5e"
+maui-devflow MAUI set-property <id> TextColor "DodgerBlue"
+
+# Change sizing and layout
+maui-devflow MAUI set-property <id> FontSize "24"
+maui-devflow MAUI set-property <id> Padding "10,5,10,5"
+maui-devflow MAUI set-property <id> Opacity "0.5"
+maui-devflow MAUI set-property <id> WidthRequest "200"
+
+# Toggle visibility
+maui-devflow MAUI set-property <id> IsVisible "false"
+```
+
+Supports: string, bool, int, double, Color (named/hex), Thickness, enums. Changes persist
+until the app restarts — safe for experimentation.
+
 **Typical interaction flow:**
 1. `maui-devflow MAUI fill <entryId> "text"` — type into Entry/Editor fields
 2. `maui-devflow MAUI tap <buttonId>` — tap buttons, checkboxes, list items
@@ -218,6 +244,7 @@ Global options: `--agent-host` (default localhost), `--agent-port` (default 9223
 | `MAUI clear <elementId>` | Clear text from element |
 | `MAUI screenshot [--output path.png]` | PNG screenshot |
 | `MAUI property <elementId> <prop>` | Read property (Text, IsVisible, FontSize, etc.) |
+| `MAUI set-property <elementId> <prop> <value>` | Set property (live editing — colors, text, sizes, etc.) |
 | `MAUI element <elementId>` | Full element JSON (type, bounds, children, etc.) |
 | `MAUI navigate <route>` | Shell navigation (e.g. `//native`, `//blazor`) |
 | `MAUI logs [--limit N] [--skip N]` | Fetch application logs (newest first) |
@@ -264,6 +291,7 @@ The agent exposes JSON endpoints on port 9223 (configurable via `-p:MauiDevFlowP
 | `/api/action/focus` | POST | `{"elementId":"..."}` |
 | `/api/screenshot` | GET | — (returns PNG) |
 | `/api/property/{id}/{name}` | GET | — |
+| `/api/property/{id}/{name}` | POST | `{"value":"..."}` (set property — live editing) |
 | `/api/logs?limit=N&skip=N` | GET | — (returns JSON array of log entries) |
 | `/api/cdp` | POST | CDP command JSON (e.g. `{"id":1,"method":"Runtime.evaluate","params":{...}}`) |
 

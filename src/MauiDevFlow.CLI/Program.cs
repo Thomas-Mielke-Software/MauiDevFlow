@@ -192,6 +192,14 @@ class Program
         mauiPropertyCmd.SetHandler(async (host, port, id, name) => await MauiPropertyAsync(host, port, id, name), agentHostOption, agentPortOption, propIdArg, propNameArg);
         mauiCommand.Add(mauiPropertyCmd);
 
+        // MAUI set-property
+        var setPropIdArg = new Argument<string>("elementId", "Element ID");
+        var setPropNameArg = new Argument<string>("propertyName", "Property name");
+        var setPropValueArg = new Argument<string>("value", "Value to set");
+        var mauiSetPropertyCmd = new Command("set-property", "Set element property (live editing)") { setPropIdArg, setPropNameArg, setPropValueArg };
+        mauiSetPropertyCmd.SetHandler(async (host, port, id, name, value) => await MauiSetPropertyAsync(host, port, id, name, value), agentHostOption, agentPortOption, setPropIdArg, setPropNameArg, setPropValueArg);
+        mauiCommand.Add(mauiSetPropertyCmd);
+
         // MAUI element
         var elementIdArg = new Argument<string>("elementId", "Element ID");
         var mauiElementCmd = new Command("element", "Get element details") { elementIdArg };
@@ -788,6 +796,25 @@ class Program
             using var client = new MauiDevFlow.Driver.AgentClient(host, port);
             var value = await client.GetPropertyAsync(elementId, propertyName);
             Console.WriteLine(value != null ? $"{propertyName}: {value}" : $"Property '{propertyName}' not found");
+        }
+        catch (Exception ex) { WriteError(ex.Message); }
+    }
+
+    private static async Task MauiSetPropertyAsync(string host, int port, string elementId, string propertyName, string value)
+    {
+        try
+        {
+            using var http = new HttpClient();
+            http.Timeout = TimeSpan.FromSeconds(10);
+            var json = JsonSerializer.Serialize(new { value });
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+            var response = await http.PostAsync($"http://{host}:{port}/api/property/{elementId}/{propertyName}", content);
+            var body = await response.Content.ReadAsStringAsync();
+
+            if (response.IsSuccessStatusCode)
+                Console.WriteLine($"Set {propertyName} = {value}");
+            else
+                WriteError($"Failed: {body}");
         }
         catch (Exception ex) { WriteError(ex.Message); }
     }
