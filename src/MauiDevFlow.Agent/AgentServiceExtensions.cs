@@ -67,11 +67,11 @@ public static class AgentServiceExtensions
                             if (app != null)
                             {
                                 app.Dispatcher.Dispatch(() => service.Start(app, app.Dispatcher));
-                                System.Diagnostics.Debug.WriteLine($"[MauiDevFlow] Agent started on port {options.Port}");
+                                Console.WriteLine($"[MauiDevFlow] Agent started on port {options.Port}");
                                 return;
                             }
                         }
-                        System.Diagnostics.Debug.WriteLine("[MauiDevFlow] Failed to start agent: Application.Current was null");
+                        Console.WriteLine("[MauiDevFlow] Failed to start agent: Application.Current was null after 30 retries");
                     });
                     return true;
                 });

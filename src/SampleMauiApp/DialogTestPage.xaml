@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="SampleMauiApp.DialogTestPage"
+             Title="Dialog Tests">
+    <ContentPage.BackgroundColor>
+        <AppThemeBinding Light="#F5F5F5" Dark="#1C1B1F" />
+    </ContentPage.BackgroundColor>
+
+    <ScrollView Padding="16">
+        <VerticalStackLayout Spacing="12">
+
+            <!-- Status label -->
+            <Label x:Name="StatusLabel"
+                   Text="last action: none"
+                   FontSize="14"
+                   FontAttributes="Italic"
+                   AutomationId="DialogStatusLabel">
+                <Label.TextColor>
+                    <AppThemeBinding Light="#49454F" Dark="#CAC4D0" />
+                </Label.TextColor>
+            </Label>
+
+            <!-- Section: Permission Dialogs -->
+            <Label Text="Permission Dialogs" FontSize="18" FontAttributes="Bold">
+                <Label.TextColor>
+                    <AppThemeBinding Light="#1C1B1F" Dark="#E6E1E5" />
+                </Label.TextColor>
+            </Label>
+
+            <Button Text="Request Location"
+                    AutomationId="RequestLocationBtn"
+                    Clicked="OnRequestLocation"
+                    Style="{StaticResource DialogButton}" />
+
+            <Button Text="Request Camera"
+                    AutomationId="RequestCameraBtn"
+                    Clicked="OnRequestCamera"
+                    Style="{StaticResource DialogButton}" />
+
+            <Button Text="Request Photos"
+                    AutomationId="RequestPhotosBtn"
+                    Clicked="OnRequestPhotos"
+                    Style="{StaticResource DialogButton}" />
+
+            <Button Text="Request Contacts"
+                    AutomationId="RequestContactsBtn"
+                    Clicked="OnRequestContacts"
+                    Style="{StaticResource DialogButton}" />
+
+            <Button Text="Request Microphone"
+                    AutomationId="RequestMicrophoneBtn"
+                    Clicked="OnRequestMicrophone"
+                    Style="{StaticResource DialogButton}" />
+
+            <Button Text="Request Notifications"
+                    AutomationId="RequestNotificationsBtn"
+                    Clicked="OnRequestNotifications"
+                    Style="{StaticResource DialogButton}" />
+
+            <!-- Section: App Alerts -->
+            <Label Text="App Alerts" FontSize="18" FontAttributes="Bold" Margin="0,12,0,0">
+                <Label.TextColor>
+                    <AppThemeBinding Light="#1C1B1F" Dark="#E6E1E5" />
+                </Label.TextColor>
+            </Label>
+
+            <Button Text="Alert: OK Only"
+                    AutomationId="AlertOkOnlyBtn"
+                    Clicked="OnAlertOkOnly"
+                    Style="{StaticResource DialogButton}" />
+
+            <Button Text="Alert: OK / Cancel"
+                    AutomationId="AlertOkCancelBtn"
+                    Clicked="OnAlertOkCancel"
+                    Style="{StaticResource DialogButton}" />
+
+            <Button Text="Alert: Custom Buttons"
+                    AutomationId="AlertCustomBtn"
+                    Clicked="OnAlertCustomButtons"
+                    Style="{StaticResource DialogButton}" />
+
+            <Button Text="Action Sheet"
+                    AutomationId="ActionSheetBtn"
+                    Clicked="OnActionSheet"
+                    Style="{StaticResource DialogButton}" />
+
+            <!-- Section: Prompt -->
+            <Label Text="Prompt Dialogs" FontSize="18" FontAttributes="Bold" Margin="0,12,0,0">
+                <Label.TextColor>
+                    <AppThemeBinding Light="#1C1B1F" Dark="#E6E1E5" />
+                </Label.TextColor>
+            </Label>
+
+            <Button Text="Prompt: Text Input"
+                    AutomationId="PromptInputBtn"
+                    Clicked="OnPromptInput"
+                    Style="{StaticResource DialogButton}" />
+
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

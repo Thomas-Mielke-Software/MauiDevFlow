@@ -7,8 +7,9 @@ description: >
   UI (visual tree, element tapping, filling text, screenshots, property queries), (4) Debugging Blazor WebView
   content inside a MAUI app via CDP, (5) Managing iOS simulators or Android emulators (create, boot, list, install),
   (6) Setting up the MauiDevFlow agent and CLI in a MAUI project, (7) Completing a build-deploy-inspect-fix feedback
-  loop for MAUI app development. Covers: maui-devflow CLI, androidsdk.tool (android), appledev.tools (apple),
-  adb, xcrun simctl, and dotnet build/run for all MAUI target platforms.
+  loop for MAUI app development, (8) Handling iOS permission dialogs, system alerts, and app-level alerts via
+  simctl privacy or accessibility tree detection. Covers: maui-devflow CLI, androidsdk.tool (android),
+  appledev.tools (apple), adb, xcrun simctl, and dotnet build/run for all MAUI target platforms.
 ---
 
 # MAUI AI Debugging

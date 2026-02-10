@@ -28,5 +28,15 @@
     </array>
     <key>XSAppIconAssets</key>
     <string>Assets.xcassets/appicon.appiconset</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>This app needs location access for testing dialog handling.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>This app needs camera access for testing dialog handling.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>This app needs photo library access for testing dialog handling.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>This app needs contacts access for testing dialog handling.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>This app needs microphone access for testing dialog handling.</string>
 </dict>
 </plist>

@@ -212,6 +212,71 @@ class Program
         mauiNavigateCmd.SetHandler(async (host, port, route) => await MauiNavigateAsync(host, port, route), agentHostOption, agentPortOption, navRouteArg);
         mauiCommand.Add(mauiNavigateCmd);
 
+        // MAUI alert subcommands — supports iOS simulator (apple CLI) and Mac Catalyst (macOS AX API)
+        var alertCommand = new Command("alert", "Detect and dismiss system/app dialogs");
+
+        // detect
+        var detectUdid = new Option<string?>("--udid", "Simulator UDID (auto-detects booted simulator if omitted)");
+        var detectPid = new Option<int?>("--pid", "Mac Catalyst app PID (auto-detects if omitted)");
+        var detectPlatform = new Option<string>("--platform", () => "auto", "Platform: maccatalyst, ios, android, or auto");
+        var detectHost = new Option<string>("--agent-host", () => "localhost", "Agent HTTP host");
+        var detectPort = new Option<int>("--agent-port", () => 9223, "Agent HTTP port");
+        var alertDetectCmd = new Command("detect", "Check if an alert/dialog is visible") { detectUdid, detectPid, detectPlatform, detectHost, detectPort };
+        alertDetectCmd.SetHandler(async (udid, pid, platform, host, port) =>
+            await AlertDetectAsync(udid, pid, platform, host, port), detectUdid, detectPid, detectPlatform, detectHost, detectPort);
+        alertCommand.Add(alertDetectCmd);
+
+        // dismiss
+        var dismissUdid = new Option<string?>("--udid", "Simulator UDID (auto-detects booted simulator if omitted)");
+        var dismissPid = new Option<int?>("--pid", "Mac Catalyst app PID (auto-detects if omitted)");
+        var dismissPlatform = new Option<string>("--platform", () => "auto", "Platform: maccatalyst, ios, android, or auto");
+        var dismissHost = new Option<string>("--agent-host", () => "localhost", "Agent HTTP host");
+        var dismissPort = new Option<int>("--agent-port", () => 9223, "Agent HTTP port");
+        var dismissButtonArg = new Argument<string?>("button", () => null, "Button label to tap (default: first accept-style button)");
+        var alertDismissCmd = new Command("dismiss", "Dismiss the current alert/dialog") { dismissButtonArg, dismissUdid, dismissPid, dismissPlatform, dismissHost, dismissPort };
+        alertDismissCmd.SetHandler(async (udid, pid, platform, host, port, button) =>
+            await AlertDismissAsync(udid, pid, platform, host, port, button), dismissUdid, dismissPid, dismissPlatform, dismissHost, dismissPort, dismissButtonArg);
+        alertCommand.Add(alertDismissCmd);
+
+        // tree
+        var treeUdid = new Option<string?>("--udid", "Simulator UDID (auto-detects booted simulator if omitted)");
+        var treePid = new Option<int?>("--pid", "Mac Catalyst app PID (auto-detects if omitted)");
+        var treePlatform = new Option<string>("--platform", () => "auto", "Platform: maccatalyst, ios, android, or auto");
+        var treeHost = new Option<string>("--agent-host", () => "localhost", "Agent HTTP host");
+        var treePort = new Option<int>("--agent-port", () => 9223, "Agent HTTP port");
+        var alertTreeCmd = new Command("tree", "Show raw accessibility tree") { treeUdid, treePid, treePlatform, treeHost, treePort };
+        alertTreeCmd.SetHandler(async (udid, pid, platform, host, port) =>
+            await AlertTreeAsync(udid, pid, platform, host, port), treeUdid, treePid, treePlatform, treeHost, treePort);
+        alertCommand.Add(alertTreeCmd);
+
+        mauiCommand.Add(alertCommand);
+
+        // MAUI permission subcommands (iOS simulator only — uses xcrun simctl privacy)
+        var permissionCommand = new Command("permission", "Manage iOS simulator permissions");
+
+        var permGrantUdid = new Option<string?>("--udid", "Simulator UDID (auto-detects booted simulator if omitted)");
+        var permGrantBundle = new Option<string?>("--bundle-id", "App bundle identifier");
+        var permGrantServiceArg = new Argument<string>("service", "Permission service (camera, location, photos, contacts, microphone, calendar, all, etc.)");
+        var permGrantCmd = new Command("grant", "Grant a permission (no dialog will appear)") { permGrantServiceArg, permGrantUdid, permGrantBundle };
+        permGrantCmd.SetHandler(async (udid, bundleId, service) => await PermissionAsync("grant", udid, bundleId, service), permGrantUdid, permGrantBundle, permGrantServiceArg);
+        permissionCommand.Add(permGrantCmd);
+
+        var permRevokeUdid = new Option<string?>("--udid", "Simulator UDID (auto-detects booted simulator if omitted)");
+        var permRevokeBundle = new Option<string?>("--bundle-id", "App bundle identifier");
+        var permRevokeServiceArg = new Argument<string>("service", "Permission service");
+        var permRevokeCmd = new Command("revoke", "Revoke a permission") { permRevokeServiceArg, permRevokeUdid, permRevokeBundle };
+        permRevokeCmd.SetHandler(async (udid, bundleId, service) => await PermissionAsync("revoke", udid, bundleId, service), permRevokeUdid, permRevokeBundle, permRevokeServiceArg);
+        permissionCommand.Add(permRevokeCmd);
+
+        var permResetUdid = new Option<string?>("--udid", "Simulator UDID (auto-detects booted simulator if omitted)");
+        var permResetBundle = new Option<string?>("--bundle-id", "App bundle identifier");
+        var permResetServiceArg = new Argument<string>("service", () => "all", "Permission service (default: all)");
+        var permResetCmd = new Command("reset", "Reset permission (app will be prompted again)") { permResetServiceArg, permResetUdid, permResetBundle };
+        permResetCmd.SetHandler(async (udid, bundleId, service) => await PermissionAsync("reset", udid, bundleId, service), permResetUdid, permResetBundle, permResetServiceArg);
+        permissionCommand.Add(permResetCmd);
+
+        mauiCommand.Add(permissionCommand);
+
         // logs command
         var logsLimitOption = new Option<int>("--limit", () => 100, "Number of log entries to return");
         var logsSkipOption = new Option<int>("--skip", () => 0, "Number of newest entries to skip");
@@ -932,6 +997,230 @@ class Program
             if (el.Children != null)
                 PrintTree(el.Children, indent + 1);
         }
+    }
+
+    // ===== Alert & Permission Commands (iOS Simulator) =====
+
+    private static async Task<string> ResolveUdidAsync(string? udid)
+    {
+        if (!string.IsNullOrEmpty(udid)) return udid;
+
+        // Auto-detect booted simulator
+        var psi = new System.Diagnostics.ProcessStartInfo("xcrun", "simctl list devices booted -j")
+        {
+            RedirectStandardOutput = true,
+            UseShellExecute = false
+        };
+        using var proc = System.Diagnostics.Process.Start(psi)!;
+        var output = await proc.StandardOutput.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+
+        using var doc = JsonDocument.Parse(output);
+        if (doc.RootElement.TryGetProperty("devices", out var devices))
+        {
+            foreach (var runtime in devices.EnumerateObject())
+            {
+                foreach (var device in runtime.Value.EnumerateArray())
+                {
+                    var state = device.TryGetProperty("state", out var s) ? s.GetString() : null;
+                    if (state == "Booted")
+                    {
+                        var resolved = device.GetProperty("udid").GetString()!;
+                        return resolved;
+                    }
+                }
+            }
+        }
+        throw new InvalidOperationException("No booted simulator found. Specify --udid or boot a simulator.");
+    }
+
+    private static async Task<string> ResolveAlertPlatformAsync(string platform, string host, int port)
+    {
+        var p = platform.ToLowerInvariant();
+        if (p.Contains("catalyst")) return "maccatalyst";
+        if (p.Contains("ios") || p.Contains("simulator")) return "ios-simulator";
+        if (p.Contains("android")) return "android";
+
+        // Auto-detect from agent
+        try
+        {
+            using var client = new MauiDevFlow.Driver.AgentClient(host, port);
+            var status = await client.GetStatusAsync();
+            if (status?.Platform != null)
+            {
+                var sp = status.Platform.ToLowerInvariant();
+                if (sp.Contains("catalyst")) return "maccatalyst";
+                if (sp.Contains("android")) return "android";
+                if (sp.Contains("ios")) return "ios-simulator";
+            }
+        }
+        catch { }
+
+        return "maccatalyst"; // default fallback
+    }
+
+    private static async Task<int> ResolveMacCatalystPidAsync(int? pid, string host, int port)
+    {
+        if (pid.HasValue) return pid.Value;
+
+        // Try to find the PID by checking what's listening on the agent port
+        try
+        {
+            using var client = new MauiDevFlow.Driver.AgentClient(host, port);
+            var status = await client.GetStatusAsync();
+            if (status?.AppName != null)
+            {
+                // Find process by app name
+                var psi = new System.Diagnostics.ProcessStartInfo("pgrep", $"-f {status.AppName}")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false
+                };
+                using var proc = System.Diagnostics.Process.Start(psi)!;
+                var output = await proc.StandardOutput.ReadToEndAsync();
+                await proc.WaitForExitAsync();
+                var lines = output.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                if (lines.Length > 0 && int.TryParse(lines[0].Trim(), out var resolved))
+                    return resolved;
+            }
+        }
+        catch { }
+
+        throw new InvalidOperationException("Cannot determine Mac Catalyst app PID. Specify --pid.");
+    }
+
+    private static async Task AlertDetectAsync(string? udid, int? pid, string platform, string host, int port)
+    {
+        try
+        {
+            var plat = await ResolveAlertPlatformAsync(platform, host, port);
+
+            if (plat == "maccatalyst")
+            {
+                var resolvedPid = await ResolveMacCatalystPidAsync(pid, host, port);
+                var driver = new MauiDevFlow.Driver.MacCatalystAppDriver { ProcessId = resolvedPid };
+                var alert = await driver.DetectAlertAsync();
+                if (alert is null) { Console.WriteLine("No alert detected"); return; }
+                Console.WriteLine($"Alert: {alert.Title ?? "(no title)"}");
+                foreach (var btn in alert.Buttons)
+                    Console.WriteLine($"  Button: \"{btn.Label}\"");
+            }
+            else if (plat == "android")
+            {
+                var driver = new MauiDevFlow.Driver.AndroidAppDriver { Serial = udid };
+                var alert = await driver.DetectAlertAsync();
+                if (alert is null) { Console.WriteLine("No alert detected"); return; }
+                Console.WriteLine($"Alert: {alert.Title ?? "(no title)"}");
+                foreach (var btn in alert.Buttons)
+                    Console.WriteLine($"  Button: \"{btn.Label}\" at ({btn.CenterX}, {btn.CenterY})");
+            }
+            else
+            {
+                var resolved = await ResolveUdidAsync(udid);
+                var driver = new MauiDevFlow.Driver.iOSSimulatorAppDriver { DeviceUdid = resolved };
+                var alert = await driver.DetectAlertAsync();
+                if (alert is null) { Console.WriteLine("No alert detected"); return; }
+                Console.WriteLine($"Alert: {alert.Title ?? "(no title)"}");
+                foreach (var btn in alert.Buttons)
+                    Console.WriteLine($"  Button: \"{btn.Label}\" at ({btn.CenterX}, {btn.CenterY})");
+            }
+        }
+        catch (Exception ex) { WriteError(ex.Message); }
+    }
+
+    private static async Task AlertDismissAsync(string? udid, int? pid, string platform, string host, int port, string? buttonLabel)
+    {
+        try
+        {
+            var plat = await ResolveAlertPlatformAsync(platform, host, port);
+
+            if (plat == "maccatalyst")
+            {
+                var resolvedPid = await ResolveMacCatalystPidAsync(pid, host, port);
+                var driver = new MauiDevFlow.Driver.MacCatalystAppDriver { ProcessId = resolvedPid };
+                var alert = await driver.HandleAlertIfPresentAsync(buttonLabel);
+                if (alert is null) Console.WriteLine("No alert to dismiss");
+                else Console.WriteLine($"Dismissed: {alert.Title ?? "(alert)"}");
+            }
+            else if (plat == "android")
+            {
+                var driver = new MauiDevFlow.Driver.AndroidAppDriver { Serial = udid };
+                var alert = await driver.HandleAlertIfPresentAsync(buttonLabel);
+                if (alert is null) Console.WriteLine("No alert to dismiss");
+                else Console.WriteLine($"Dismissed: {alert.Title ?? "(alert)"}");
+            }
+            else
+            {
+                var resolved = await ResolveUdidAsync(udid);
+                var driver = new MauiDevFlow.Driver.iOSSimulatorAppDriver { DeviceUdid = resolved };
+                var alert = await driver.HandleAlertIfPresentAsync(buttonLabel);
+                if (alert is null) Console.WriteLine("No alert to dismiss");
+                else Console.WriteLine($"Dismissed: {alert.Title ?? "(alert)"}");
+            }
+        }
+        catch (Exception ex) { WriteError(ex.Message); }
+    }
+
+    private static async Task AlertTreeAsync(string? udid, int? pid, string platform, string host, int port)
+    {
+        try
+        {
+            var plat = await ResolveAlertPlatformAsync(platform, host, port);
+
+            if (plat == "maccatalyst")
+            {
+                var resolvedPid = await ResolveMacCatalystPidAsync(pid, host, port);
+                var driver = new MauiDevFlow.Driver.MacCatalystAppDriver { ProcessId = resolvedPid };
+                var tree = await driver.GetAccessibilityTreeAsync();
+                Console.WriteLine(tree);
+            }
+            else if (plat == "android")
+            {
+                var driver = new MauiDevFlow.Driver.AndroidAppDriver { Serial = udid };
+                var tree = await driver.GetAccessibilityTreeAsync();
+                Console.WriteLine(tree);
+            }
+            else
+            {
+                var resolved = await ResolveUdidAsync(udid);
+                var driver = new MauiDevFlow.Driver.iOSSimulatorAppDriver { DeviceUdid = resolved };
+                var json = await driver.GetAccessibilityTreeAsync();
+                using var doc = JsonDocument.Parse(json);
+                Console.WriteLine(JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true }));
+            }
+        }
+        catch (Exception ex) { WriteError(ex.Message); }
+    }
+
+    private static async Task PermissionAsync(string action, string? udid, string? bundleId, string service)
+    {
+        try
+        {
+            var resolved = await ResolveUdidAsync(udid);
+            // Run xcrun simctl privacy directly (driver methods require BundleId which may not be set)
+            var args = string.IsNullOrEmpty(bundleId)
+                ? $"simctl privacy {resolved} {action} {service}"
+                : $"simctl privacy {resolved} {action} {service} {bundleId}";
+
+            var psi = new System.Diagnostics.ProcessStartInfo("xcrun", args)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            using var proc = System.Diagnostics.Process.Start(psi)!;
+            await proc.WaitForExitAsync();
+
+            if (proc.ExitCode != 0)
+            {
+                var stderr = await proc.StandardError.ReadToEndAsync();
+                WriteError($"simctl privacy failed: {stderr.Trim()}");
+                return;
+            }
+            Console.WriteLine($"Permission {action}: {service}" + (bundleId != null ? $" for {bundleId}" : ""));
+        }
+        catch (Exception ex) { WriteError(ex.Message); }
     }
 
     /// <summary>

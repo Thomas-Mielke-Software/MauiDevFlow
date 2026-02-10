@@ -79,11 +79,11 @@ public class DevFlowAgentService : IDisposable
         try
         {
             _server.Start();
-            System.Diagnostics.Debug.WriteLine($"[MauiDevFlow.Agent] HTTP server started on port {_options.Port}");
+            Console.WriteLine($"[MauiDevFlow.Agent] HTTP server started on port {_options.Port}");
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[MauiDevFlow.Agent] Failed to start: {ex.Message}");
+            Console.WriteLine($"[MauiDevFlow.Agent] Failed to start HTTP server: {ex.Message}");
         }
     }
 

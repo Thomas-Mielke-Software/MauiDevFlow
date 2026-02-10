@@ -12,6 +12,19 @@
                 https://go.microsoft.com/fwlink/?linkid=2282329
             -->
 
+            <Style x:Key="DialogButton" TargetType="Button">
+                <Setter Property="BackgroundColor">
+                    <Setter.Value>
+                        <AppThemeBinding Light="#6750A4" Dark="#D0BCFF" />
+                    </Setter.Value>
+                </Setter>
+                <Setter Property="TextColor">
+                    <Setter.Value>
+                        <AppThemeBinding Light="#FFFFFF" Dark="#381E72" />
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
         </ResourceDictionary>
     </Application.Resources>
 </Application>

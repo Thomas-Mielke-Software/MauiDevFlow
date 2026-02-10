@@ -11,5 +11,7 @@
                   ContentTemplate="{DataTemplate local:BlazorTodoPage}" />
     <ShellContent Title="Interactions" Route="interactions"
                   ContentTemplate="{DataTemplate local:InteractionTestPage}" />
+    <ShellContent Title="Dialogs" Route="dialogs"
+                  ContentTemplate="{DataTemplate local:DialogTestPage}" />
 
 </Shell>
