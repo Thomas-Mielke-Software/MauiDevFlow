@@ -27,7 +27,7 @@ class Program
         var platformOption = new Option<string>(
             ["--platform", "-p"],
             () => "maccatalyst",
-            "Target platform (maccatalyst, android, ios)");
+            "Target platform (maccatalyst, android, ios, windows)");
 
         // ===== CDP commands (Blazor WebView) =====
         
@@ -218,7 +218,7 @@ class Program
         // detect
         var detectUdid = new Option<string?>("--udid", "Simulator UDID (auto-detects booted simulator if omitted)");
         var detectPid = new Option<int?>("--pid", "Mac Catalyst app PID (auto-detects if omitted)");
-        var detectPlatform = new Option<string>("--platform", () => "auto", "Platform: maccatalyst, ios, android, or auto");
+        var detectPlatform = new Option<string>("--platform", () => "auto", "Platform: maccatalyst, ios, android, windows, or auto");
         var detectHost = new Option<string>("--agent-host", () => "localhost", "Agent HTTP host");
         var detectPort = new Option<int>("--agent-port", () => 9223, "Agent HTTP port");
         var alertDetectCmd = new Command("detect", "Check if an alert/dialog is visible") { detectUdid, detectPid, detectPlatform, detectHost, detectPort };
@@ -229,7 +229,7 @@ class Program
         // dismiss
         var dismissUdid = new Option<string?>("--udid", "Simulator UDID (auto-detects booted simulator if omitted)");
         var dismissPid = new Option<int?>("--pid", "Mac Catalyst app PID (auto-detects if omitted)");
-        var dismissPlatform = new Option<string>("--platform", () => "auto", "Platform: maccatalyst, ios, android, or auto");
+        var dismissPlatform = new Option<string>("--platform", () => "auto", "Platform: maccatalyst, ios, android, windows, or auto");
         var dismissHost = new Option<string>("--agent-host", () => "localhost", "Agent HTTP host");
         var dismissPort = new Option<int>("--agent-port", () => 9223, "Agent HTTP port");
         var dismissButtonArg = new Argument<string?>("button", () => null, "Button label to tap (default: first accept-style button)");
@@ -241,7 +241,7 @@ class Program
         // tree
         var treeUdid = new Option<string?>("--udid", "Simulator UDID (auto-detects booted simulator if omitted)");
         var treePid = new Option<int?>("--pid", "Mac Catalyst app PID (auto-detects if omitted)");
-        var treePlatform = new Option<string>("--platform", () => "auto", "Platform: maccatalyst, ios, android, or auto");
+        var treePlatform = new Option<string>("--platform", () => "auto", "Platform: maccatalyst, ios, android, windows, or auto");
         var treeHost = new Option<string>("--agent-host", () => "localhost", "Agent HTTP host");
         var treePort = new Option<int>("--agent-port", () => 9223, "Agent HTTP port");
         var alertTreeCmd = new Command("tree", "Show raw accessibility tree") { treeUdid, treePid, treePlatform, treeHost, treePort };

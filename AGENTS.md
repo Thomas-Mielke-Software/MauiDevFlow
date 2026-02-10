@@ -8,7 +8,7 @@ MauiDevFlow is a toolkit for AI-assisted .NET MAUI app development. It provides:
 - **In-app Agent** (`MauiDevFlow.Agent`) — HTTP API running inside the MAUI app for visual tree inspection, element interaction, screenshots, and logging
 - **Blazor CDP Bridge** (`MauiDevFlow.Blazor`) — Chrome DevTools Protocol support via Chobitsu for Blazor Hybrid WebView debugging
 - **CLI Tool** (`MauiDevFlow.CLI`) — Terminal commands for both native MAUI and Blazor automation
-- **Driver Library** (`MauiDevFlow.Driver`) — Platform-aware orchestration (Mac Catalyst, Android, iOS)
+- **Driver Library** (`MauiDevFlow.Driver`) — Platform-aware orchestration (Mac Catalyst, Android, iOS, Windows)
 - **AI Skill** (`.claude/skills/maui-ai-debugging/`) — Skill files teaching AI agents the full build→deploy→inspect→fix workflow
 
 ## Architecture
