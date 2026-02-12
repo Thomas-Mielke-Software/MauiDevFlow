@@ -108,4 +108,52 @@ public class GtkAgentService : DevFlowAgentService
             base.TryNativeResize(window, width, height);
         }
     }
+
+    protected override async Task<byte[]?> CaptureFullScreenAsync()
+    {
+        // Use XDG Desktop Portal Screenshot via DBUS to capture the full screen
+        // including all windows (modal dialogs, popups, etc.)
+        try
+        {
+            var process = new System.Diagnostics.Process();
+            process.StartInfo.FileName = "gdbus";
+            process.StartInfo.Arguments = "call --session --dest org.freedesktop.portal.Desktop " +
+                "--object-path /org/freedesktop/portal/desktop " +
+                "--method org.freedesktop.portal.Screenshot.Screenshot \"\" \"{'interactive': <false>}\"";
+            process.StartInfo.UseShellExecute = false;
+            process.StartInfo.RedirectStandardOutput = true;
+            process.StartInfo.RedirectStandardError = true;
+            process.Start();
+
+            await process.WaitForExitAsync();
+            if (process.ExitCode != 0) return null;
+
+            // Wait briefly for the screenshot file to be written
+            await Task.Delay(500);
+
+            // Find the most recent screenshot in ~/Pictures/
+            var picturesDir = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyPictures));
+            if (!System.IO.Directory.Exists(picturesDir))
+                picturesDir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Pictures");
+
+            if (!System.IO.Directory.Exists(picturesDir)) return null;
+
+            var screenshots = System.IO.Directory.GetFiles(picturesDir, "Screenshot*.png")
+                .OrderByDescending(f => System.IO.File.GetLastWriteTimeUtc(f))
+                .FirstOrDefault();
+
+            if (screenshots == null) return null;
+
+            // Only use if it was created very recently (within last 5 seconds)
+            var fileTime = System.IO.File.GetLastWriteTimeUtc(screenshots);
+            if ((DateTime.UtcNow - fileTime).TotalSeconds > 5) return null;
+
+            return await System.IO.File.ReadAllBytesAsync(screenshots);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

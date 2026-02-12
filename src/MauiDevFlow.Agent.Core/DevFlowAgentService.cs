@@ -107,6 +107,7 @@ public class DevFlowAgentService : IDisposable
         _server.MapPost("/api/action/focus", HandleFocus);
         _server.MapPost("/api/action/navigate", HandleNavigate);
         _server.MapPost("/api/action/resize", HandleResize);
+        _server.MapPost("/api/action/scroll", HandleScroll);
         _server.MapGet("/api/logs", HandleLogs);
         _server.MapPost("/api/cdp", HandleCdp);
     }
@@ -176,6 +177,23 @@ public class DevFlowAgentService : IDisposable
     {
         if (_app == null) return HttpResponse.Error("Agent not bound to app");
 
+        // Check for fullscreen mode (captures all windows including dialogs)
+        if (request.QueryParams.TryGetValue("fullscreen", out var fs) &&
+            fs.Equals("true", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var pngData = await CaptureFullScreenAsync();
+                if (pngData != null)
+                    return HttpResponse.Png(pngData);
+                return HttpResponse.Error("Full-screen capture not supported on this platform");
+            }
+            catch (Exception ex)
+            {
+                return HttpResponse.Error($"Full-screen screenshot failed: {ex.Message}");
+            }
+        }
+
         try
         {
             var pngData = await DispatchAsync(async () =>
@@ -203,6 +221,16 @@ public class DevFlowAgentService : IDisposable
     protected virtual async Task<byte[]?> CaptureScreenshotAsync(VisualElement rootElement)
     {
         return await VisualDiagnostics.CaptureAsPngAsync(rootElement);
+    }
+
+    /// <summary>
+    /// Captures a full-screen screenshot including all windows (dialogs, popups, etc.).
+    /// Override in platform-specific subclasses for native support.
+    /// Returns null if not supported.
+    /// </summary>
+    protected virtual Task<byte[]?> CaptureFullScreenAsync()
+    {
+        return Task.FromResult<byte[]?>(null);
     }
 
     private async Task<HttpResponse> HandleProperty(HttpRequest request)
@@ -617,6 +645,90 @@ public class DevFlowAgentService : IDisposable
 
     private record ResizeRequest(int Width, int Height);
 
+    private async Task<HttpResponse> HandleScroll(HttpRequest request)
+    {
+        if (_app == null) return HttpResponse.Error("Agent not bound to app");
+
+        var body = request.BodyAs<ScrollRequest>();
+        if (body == null)
+            return HttpResponse.Error("Request body is required");
+
+        var result = await DispatchAsync(async () =>
+        {
+            // If elementId is given, find the nearest ScrollView ancestor and scroll to that element
+            if (!string.IsNullOrEmpty(body.ElementId))
+            {
+                var el = _treeWalker.GetElementById(body.ElementId, _app);
+                if (el == null) return "Element not found";
+
+                if (el is VisualElement ve)
+                {
+                    // Find the nearest ScrollView ancestor
+                    var scrollView = FindAncestor<ScrollView>(ve);
+                    if (scrollView != null)
+                    {
+                        await scrollView.ScrollToAsync(ve, ScrollToPosition.MakeVisible, body.Animated);
+                        return "ok";
+                    }
+
+                    // Maybe the element itself is a ScrollView
+                    if (el is ScrollView sv)
+                    {
+                        await sv.ScrollToAsync(body.DeltaX, body.DeltaY, body.Animated);
+                        return "ok";
+                    }
+                }
+
+                return $"No ScrollView ancestor found for element '{body.ElementId}'";
+            }
+
+            // Otherwise scroll by delta on the first ScrollView we find
+            var window = _app.Windows.FirstOrDefault();
+            if (window?.Page == null) return "No page available";
+
+            var targetScroll = FindDescendant<ScrollView>(window.Page);
+            if (targetScroll == null) return "No ScrollView found on page";
+
+            var newX = targetScroll.ScrollX + body.DeltaX;
+            var newY = targetScroll.ScrollY + body.DeltaY;
+            await targetScroll.ScrollToAsync(
+                Math.Max(0, newX),
+                Math.Max(0, newY),
+                body.Animated);
+            return "ok";
+        });
+
+        return result == "ok" ? HttpResponse.Ok("Scrolled") : HttpResponse.Error(result ?? "Scroll failed");
+    }
+
+    private static T? FindAncestor<T>(Element element) where T : Element
+    {
+        var current = element.Parent;
+        while (current != null)
+        {
+            if (current is T match) return match;
+            current = current.Parent;
+        }
+        return null;
+    }
+
+    private static T? FindDescendant<T>(Element element) where T : Element
+    {
+        if (element is T match) return match;
+        if (element is IVisualTreeElement vte)
+        {
+            foreach (var child in vte.GetVisualChildren())
+            {
+                if (child is Element childElement)
+                {
+                    var found = FindDescendant<T>(childElement);
+                    if (found != null) return found;
+                }
+            }
+        }
+        return null;
+    }
+
     protected async Task<T> DispatchAsync<T>(Func<T> func)
     {
         if (_dispatcher == null || _dispatcher.IsDispatchRequired == false)
@@ -716,4 +828,12 @@ public class NavigateRequest
 public class SetPropertyRequest
 {
     public string? Value { get; set; }
+}
+
+public class ScrollRequest
+{
+    public string? ElementId { get; set; }
+    public double DeltaX { get; set; }
+    public double DeltaY { get; set; }
+    public bool Animated { get; set; } = true;
 }
