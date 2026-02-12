@@ -38,9 +38,15 @@ public class DevFlowAgentService : IDisposable
     {
         _options = options ?? new AgentOptions();
         _server = new AgentHttpServer(_options.Port);
-        _treeWalker = new VisualTreeWalker();
+        _treeWalker = CreateTreeWalker();
         RegisterRoutes();
     }
+
+    /// <summary>
+    /// Creates the visual tree walker. Override in platform-specific subclasses
+    /// to return a walker with native info population.
+    /// </summary>
+    protected virtual VisualTreeWalker CreateTreeWalker() => new VisualTreeWalker();
 
     /// <summary>
     /// Sets the file log provider for serving logs via the API.

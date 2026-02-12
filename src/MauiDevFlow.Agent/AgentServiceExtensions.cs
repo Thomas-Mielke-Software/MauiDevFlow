@@ -3,7 +3,8 @@ using Microsoft.Maui.Controls;
 using Microsoft.Maui.Dispatching;
 using Microsoft.Maui.Hosting;
 using Microsoft.Maui.LifecycleEvents;
-using MauiDevFlow.Agent.Logging;
+using MauiDevFlow.Agent.Core;
+using MauiDevFlow.Agent.Core.Logging;
 
 namespace MauiDevFlow.Agent;
 
@@ -29,8 +30,8 @@ public static class AgentServiceExtensions
                 options.Port = metaPort.Value;
         }
 
-        var service = new DevFlowAgentService(options);
-        builder.Services.AddSingleton(service);
+        var service = new PlatformAgentService(options);
+        builder.Services.AddSingleton<DevFlowAgentService>(service);
 
         if (options.EnableFileLogging)
         {

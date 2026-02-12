@@ -11,6 +11,8 @@ public class GtkAgentService : DevFlowAgentService
 {
     public GtkAgentService(AgentOptions? options = null) : base(options) { }
 
+    protected override VisualTreeWalker CreateTreeWalker() => new GtkVisualTreeWalker();
+
     protected override bool TryNativeTap(VisualElement ve)
     {
         try
