@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace MauiDevFlow.Agent.Core.Logging;
+namespace MauiDevFlow.Logging;
 
 /// <summary>
 /// A single log entry stored in JSONL format.

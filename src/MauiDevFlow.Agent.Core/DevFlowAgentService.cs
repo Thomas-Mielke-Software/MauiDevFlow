@@ -4,7 +4,7 @@ using Microsoft.Maui;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Controls.Internals;
 using Microsoft.Maui.Dispatching;
-using MauiDevFlow.Agent.Core.Logging;
+using MauiDevFlow.Logging;
 
 namespace MauiDevFlow.Agent.Core;
 
