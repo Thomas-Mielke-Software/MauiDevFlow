@@ -14,8 +14,8 @@ namespace MauiDevFlow.CLI.Broker;
 public class BrokerServer : IDisposable
 {
     public const int DefaultPort = 19223;
-    public const int PortRangeStart = 9223;
-    public const int PortRangeEnd = 9899;
+    public const int PortRangeStart = 10223;
+    public const int PortRangeEnd = 10899;
 
     private readonly int _port;
     private readonly TimeSpan _idleTimeout;
@@ -155,13 +155,24 @@ public class BrokerServer : IDisposable
             }
 
             var id = AgentRegistration.ComputeId(registration.Project, registration.Tfm);
-            var port = AssignPort();
-            if (port == null)
+
+            // If the agent already has an HTTP listener (late reconnection), use its current port
+            int assignedPort;
+            if (registration.CurrentPort is > 0)
             {
-                var errorMsg = JsonSerializer.Serialize(new { type = "error", message = "No ports available" });
-                await ws.SendAsync(Encoding.UTF8.GetBytes(errorMsg), WebSocketMessageType.Text, true, CancellationToken.None);
-                await ws.CloseAsync(WebSocketCloseStatus.InternalServerError, "No ports available", CancellationToken.None);
-                return;
+                assignedPort = registration.CurrentPort.Value;
+            }
+            else
+            {
+                var newPort = AssignPort();
+                if (newPort == null)
+                {
+                    var errorMsg = JsonSerializer.Serialize(new { type = "error", message = "No ports available" });
+                    await ws.SendAsync(Encoding.UTF8.GetBytes(errorMsg), WebSocketMessageType.Text, true, CancellationToken.None);
+                    await ws.CloseAsync(WebSocketCloseStatus.InternalServerError, "No ports available", CancellationToken.None);
+                    return;
+                }
+                assignedPort = newPort.Value;
             }
 
             var agent = new AgentRegistration
@@ -171,14 +182,15 @@ public class BrokerServer : IDisposable
                 Tfm = registration.Tfm,
                 Platform = registration.Platform,
                 AppName = registration.AppName,
-                Port = port.Value,
+                Port = assignedPort,
                 ConnectedAt = DateTime.UtcNow
             };
 
             // Remove existing registration for same id (app restarted)
             if (_agents.TryRemove(id, out var existing))
             {
-                ReleasePort(existing.Registration.Port);
+                if (existing.Registration.Port != assignedPort)
+                    ReleasePort(existing.Registration.Port);
                 try { existing.WebSocket.Dispose(); } catch { }
                 Log($"Agent replaced: {agent.AppName}|{agent.Tfm} (was port {existing.Registration.Port})");
             }
@@ -186,10 +198,10 @@ public class BrokerServer : IDisposable
             var connection = new AgentConnection(agent, ws);
             _agents[id] = connection;
 
-            Log($"Agent connected: {agent.AppName}|{agent.Tfm} → port {port.Value} (id: {id})");
+            Log($"Agent connected: {agent.AppName}|{agent.Tfm} → port {assignedPort} (id: {id})");
 
             // Send registration response
-            var response = JsonSerializer.Serialize(new { type = "registered", id, port = port.Value });
+            var response = JsonSerializer.Serialize(new { type = "registered", id, port = assignedPort });
             await ws.SendAsync(Encoding.UTF8.GetBytes(response), WebSocketMessageType.Text, true, CancellationToken.None);
 
             // Keep connection alive — wait for disconnect
@@ -392,6 +404,9 @@ public class BrokerServer : IDisposable
 
         [System.Text.Json.Serialization.JsonPropertyName("appName")]
         public string AppName { get; init; } = "";
+
+        [System.Text.Json.Serialization.JsonPropertyName("currentPort")]
+        public int? CurrentPort { get; init; }
     }
 
     private record AgentConnection(AgentRegistration Registration, WebSocket WebSocket);
