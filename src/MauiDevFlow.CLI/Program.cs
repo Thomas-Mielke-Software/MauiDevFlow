@@ -15,7 +15,7 @@ class Program
     {
         var rootCommand = new RootCommand("MauiDevFlow CLI - automate MAUI apps via Agent API and Blazor WebViews via CDP");
         
-        // Global agent connection options (shared by MAUI and CDP commands)
+        // Global agent connection options (available on all commands and subcommands)
         var agentPortOption = new Option<int>(
             ["--agent-port", "-ap"],
             () => ResolveAgentPort(),
@@ -29,13 +29,13 @@ class Program
             () => "maccatalyst",
             "Target platform (maccatalyst, android, ios, windows)");
 
+        rootCommand.AddGlobalOption(agentPortOption);
+        rootCommand.AddGlobalOption(agentHostOption);
+        rootCommand.AddGlobalOption(platformOption);
+
         // ===== CDP commands (Blazor WebView) =====
         
-        var cdpCommand = new Command("cdp", "Blazor WebView automation via Chrome DevTools Protocol")
-        {
-            agentHostOption,
-            agentPortOption
-        };
+        var cdpCommand = new Command("cdp", "Blazor WebView automation via Chrome DevTools Protocol");
         
         // Browser domain commands
         var browserCommand = new Command("Browser", "Browser domain commands");
@@ -132,12 +132,7 @@ class Program
         
         // ===== MAUI Native commands =====
 
-        var mauiCommand = new Command("MAUI", "Native MAUI app automation commands")
-        {
-            agentPortOption,
-            agentHostOption,
-            platformOption
-        };
+        var mauiCommand = new Command("MAUI", "Native MAUI app automation commands");
 
         // MAUI status
         var mauiStatusCmd = new Command("status", "Check agent connection");
@@ -1339,10 +1334,32 @@ class Program
         {
             var brokerPort = Broker.BrokerClient.ReadBrokerPortPublic() ?? Broker.BrokerServer.DefaultPort;
 
-            // Quick TCP check if broker is alive
-            using var tcp = new System.Net.Sockets.TcpClient();
-            tcp.ConnectAsync("localhost", brokerPort).Wait(TimeSpan.FromMilliseconds(300));
-            if (tcp.Connected)
+            // Quick TCP check if broker is alive; auto-start if not
+            bool brokerAlive = false;
+            try
+            {
+                using var tcp = new System.Net.Sockets.TcpClient();
+                tcp.ConnectAsync("localhost", brokerPort).Wait(TimeSpan.FromMilliseconds(300));
+                brokerAlive = tcp.Connected;
+            }
+            catch { /* connect failed or timed out — broker not alive */ }
+
+            if (!brokerAlive)
+            {
+                // Auto-start broker in background
+                try
+                {
+                    var brokerResult = Broker.BrokerClient.EnsureBrokerRunningAsync().GetAwaiter().GetResult();
+                    if (brokerResult.HasValue)
+                    {
+                        brokerPort = brokerResult.Value;
+                        brokerAlive = true;
+                    }
+                }
+                catch { }
+            }
+
+            if (brokerAlive)
             {
                 // Find project in current directory
                 var csproj = Directory.GetFiles(Directory.GetCurrentDirectory(), "*.csproj").FirstOrDefault();

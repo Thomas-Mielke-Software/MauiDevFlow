@@ -165,7 +165,7 @@ public static class BrokerClient
         catch { }
     }
 
-    private static async Task<int?> StartBrokerAsync()
+    internal static async Task<int?> StartBrokerAsync()
     {
         try
         {
