@@ -2,7 +2,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Hosting;
 using MauiDevFlow.Agent.Core;
-using MauiDevFlow.Agent.Core.Logging;
+using MauiDevFlow.Logging;
 
 namespace MauiDevFlow.Agent.Gtk;
 

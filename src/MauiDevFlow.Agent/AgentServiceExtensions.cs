@@ -107,19 +107,38 @@ public static class AgentServiceExtensions
     {
         try
         {
-            var attrs = System.Reflection.Assembly.GetEntryAssembly()?
-                .GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false);
-
-            if (attrs != null)
+            // Try entry assembly first (works on Mac Catalyst, Windows)
+            var entry = System.Reflection.Assembly.GetEntryAssembly();
+            if (entry != null)
             {
-                foreach (System.Reflection.AssemblyMetadataAttribute attr in attrs)
-                {
-                    if (attr.Key == "MauiDevFlowPort" && int.TryParse(attr.Value, out var port))
-                        return port;
-                }
+                var port = FindPortInAssembly(entry);
+                if (port.HasValue) return port;
+            }
+
+            // GetEntryAssembly() returns null on Android/iOS — scan loaded assemblies
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                if (asm.IsDynamic) continue;
+                var port = FindPortInAssembly(asm);
+                if (port.HasValue) return port;
             }
         }
         catch { /* ignore reflection failures */ }
+        return null;
+    }
+
+    private static int? FindPortInAssembly(System.Reflection.Assembly assembly)
+    {
+        try
+        {
+            var attrs = assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false);
+            foreach (System.Reflection.AssemblyMetadataAttribute attr in attrs)
+            {
+                if (attr.Key == "MauiDevFlowPort" && int.TryParse(attr.Value, out var port))
+                    return port;
+            }
+        }
+        catch { /* ignore per-assembly reflection failures */ }
         return null;
     }
 }
