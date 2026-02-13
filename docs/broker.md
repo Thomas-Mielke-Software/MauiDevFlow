@@ -89,7 +89,12 @@ When you run a CLI command like `maui-devflow MAUI status`:
 2. It queries the broker's HTTP API to find the right agent:
    - If run from a project directory, it hashes the `.csproj` path to match by identity
    - If only one agent is connected, it auto-selects
-   - If multiple agents are connected, it shows a list for disambiguation
+   - If multiple agents match the same project (different TFMs), it auto-selects if
+     there's only one match
+   - If multiple agents are connected and can't be narrowed down, it prints the agent
+     list to stderr and falls back to `.mauidevflow` / default port. This is non-interactive
+     — the output is designed so an AI agent (or human) can see the available ports and
+     re-run with `--agent-port <port>`.
 
 3. Once the agent's port is known, the CLI connects directly to the agent's HTTP
    server — all existing commands (`tree`, `screenshot`, `tap`, `logs`, etc.) work
@@ -180,6 +185,35 @@ ID             App                  Platform       TFM                      Port
 7ff0e6fd13d9   MauiTodo             MacCatalyst    net10.0-maccatalyst      9223   2m 15s
 a3c9e1f20b44   MauiTodo             Android        net10.0-android          9224   1m 30s
 ```
+
+### Multiple Agents — Disambiguation
+
+When multiple agents are connected and the CLI can't determine which one to target
+(no `.csproj` in the current directory, or multiple TFMs for the same project), it
+prints the agent table to stderr and falls back to the config file port:
+
+```
+Multiple agents connected. Use --agent-port to specify which one:
+
+ID             App                  Platform       TFM                      Port
+----------------------------------------------------------------------------------
+7ff0e6fd13d9   MauiTodo             MacCatalyst    net10.0-maccatalyst      9223
+a3c9e1f20b44   MauiTodo             Android        net10.0-android          9224
+
+Example: maui-devflow MAUI status --agent-port <port>
+```
+
+This output is **non-interactive** by design. AI agents can parse it and re-run
+the command with the correct `--agent-port` flag. Humans can read the table and
+pick the right port.
+
+**Auto-resolution priority:**
+
+1. `--agent-port` flag → always wins (explicit)
+2. Exact match by project `.csproj` + TFM → single result
+3. Match by project `.csproj` only → single result (any TFM)
+4. Single agent connected → auto-select
+5. Multiple agents, ambiguous → print list, fall back to `.mauidevflow` / default
 
 ## Graceful Fallback
 

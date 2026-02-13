@@ -1355,11 +1355,30 @@ class Program
                 // Try auto-select (single agent)
                 var autoPort = Broker.BrokerClient.ResolveAgentPortAsync(brokerPort).GetAwaiter().GetResult();
                 if (autoPort.HasValue) return autoPort.Value;
+
+                // Multiple agents, can't disambiguate — show them so the caller
+                // (human or AI agent) can re-run with --agent-port
+                // Only show if we won't have a config file fallback
+                var configPort = ReadConfigPort();
+                if (configPort.HasValue) return configPort.Value;
+
+                var agents = Broker.BrokerClient.ListAgentsAsync(brokerPort).GetAwaiter().GetResult();
+                if (agents != null && agents.Length > 1)
+                {
+                    Console.Error.WriteLine("Multiple agents connected. Use --agent-port to specify which one:");
+                    Console.Error.WriteLine();
+                    Console.Error.WriteLine($"{"ID",-15}{"App",-20}{"Platform",-15}{"TFM",-25}{"Port",-7}");
+                    Console.Error.WriteLine(new string('-', 82));
+                    foreach (var a in agents)
+                        Console.Error.WriteLine($"{a.Id,-15}{a.AppName,-20}{a.Platform,-15}{a.Tfm,-25}{a.Port,-7}");
+                    Console.Error.WriteLine();
+                    Console.Error.WriteLine("Example: maui-devflow MAUI status --agent-port <port>");
+                }
             }
         }
         catch { /* broker unavailable, fall through */ }
 
-        // Fall back to config file
+        // Fall back to config file (already checked above if broker was alive)
         return ReadConfigPort() ?? 9223;
     }
 
