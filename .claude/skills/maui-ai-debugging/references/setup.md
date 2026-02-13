@@ -2,6 +2,17 @@
 
 Complete guide for integrating MauiDevFlow into a .NET MAUI app.
 
+## Table of Contents
+- [Install CLI Tools](#1-install-cli-tools)
+- [Add NuGet Packages](#2-add-nuget-packages)
+- [Register in MauiProgram.cs](#3-register-in-mauiprogramcs)
+- [Port Configuration](#3b-port-configuration)
+- [Blazor Hybrid Setup](#4-blazor-hybrid-chobitsu-auto-injection)
+- [Mac Catalyst Entitlements](#5-mac-catalyst-entitlements)
+- [Android Port Forwarding](#6-android-port-forwarding)
+- [Verify Setup](#7-verify-setup)
+- [Checking for Updates](#checking-for-updates)
+
 ## 1. Install CLI Tools
 
 ```bash
@@ -274,3 +285,40 @@ For an AI agent setting up MauiDevFlow in a new project:
 7. [ ] `adb reverse tcp:19223` for broker + `adb forward tcp:<port>` for agent (Android only)
 8. [ ] Linux/GTK: `app.StartDevFlowAgent()` called after app activation
 9. [ ] Verify with `maui-devflow list` and `maui-devflow MAUI status`
+
+## Checking for Updates
+
+At the start of each session (or periodically), check whether the CLI, skill, and NuGet
+packages are up to date. Outdated components can cause confusing failures or missing features.
+
+### Check CLI version
+```bash
+maui-devflow --version
+dotnet tool search Redth.MauiDevFlow.CLI | head -5
+```
+
+If a newer version is available:
+```bash
+dotnet tool update --global Redth.MauiDevFlow.CLI
+```
+
+### Update the skill
+```bash
+maui-devflow update-skill
+```
+
+### Check NuGet packages in the project
+```bash
+grep -i 'Redth.MauiDevFlow' *.csproj Directory.Build.props Directory.Packages.props 2>/dev/null
+```
+
+If packages are outdated:
+```bash
+dotnet add package Redth.MauiDevFlow.Agent
+dotnet add package Redth.MauiDevFlow.Blazor    # only if Blazor Hybrid
+# For Linux/GTK: use .Gtk variants instead
+```
+
+### Re-run setup verification
+After any updates, walk through the checklist above to ensure everything is still properly
+configured. A CLI update may introduce new setup requirements.
