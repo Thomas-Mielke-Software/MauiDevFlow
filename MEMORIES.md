@@ -10,10 +10,10 @@ Do NOT use `store_memory` or retrieve from memory tools — use this file instea
 
 - **CI build**: `dotnet build ci.slnf` and `dotnet test ci.slnf` (excludes SampleMauiApp which requires MAUI workloads)
 - **Sample app**: `dotnet build src/SampleMauiApp -f net10.0-maccatalyst` (or `-ios`, `-android`)
-- **Local CLI**: Always use `dotnet run --project src/MauiDevFlow.CLI --` or the built binary at `src/MauiDevFlow.CLI/bin/Debug/net9.0/MauiDevFlow.CLI` — never the globally installed tool when testing local changes
+- **Local CLI**: Always use `dotnet run --project src/MauiDevFlow.CLI --` or the built binary — never the globally installed tool when testing local changes
 - **NuGet local testing**: Use a low prerelease version (e.g. `0.0.999-as8d33f`) to avoid conflicting with published versions. Never install the tool globally when testing locally — use `dotnet run --project` instead
 - **iOS build timing**: iOS simulator builds finish faster than expected — check agent status early (~60s) instead of waiting the full 120s
-- **Incremental build caching**: Mac Catalyst builds may use stale linked DLLs from `SampleMauiApp/obj/Debug/net10.0-maccatalyst/linked/`. Always clean both Agent AND SampleMauiApp `bin`+`obj` for the target TFM when debugging Agent code changes
+- **Incremental build caching**: Mac Catalyst builds may use stale linked DLLs. Always clean both Agent AND SampleMauiApp `bin`+`obj` for the target TFM when debugging Agent code changes
 - **Always verify with sample app**: Build, deploy (Mac Catalyst is fastest on macOS), and test end-to-end before marking tasks complete
 
 ## Git & Release
