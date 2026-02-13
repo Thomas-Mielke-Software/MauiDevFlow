@@ -19,7 +19,8 @@
       <_MauiDevFlowMetadata></_MauiDevFlowMetadata>
       <_MauiDevFlowMetadata Condition="'$(MauiDevFlowPort)' != ''">$(_MauiDevFlowMetadata)[assembly: System.Reflection.AssemblyMetadataAttribute("MauiDevFlowPort", "$(MauiDevFlowPort)")]
 </_MauiDevFlowMetadata>
-      <_MauiDevFlowMetadata>$(_MauiDevFlowMetadata)[assembly: System.Reflection.AssemblyMetadataAttribute("MauiDevFlowProject", "$(MSBuildProjectFullPath)")]
+      <_MauiDevFlowProjectPath>$([MSBuild]::ValueOrDefault('$(MSBuildProjectFullPath)','').Replace('\','\\'))</_MauiDevFlowProjectPath>
+      <_MauiDevFlowMetadata>$(_MauiDevFlowMetadata)[assembly: System.Reflection.AssemblyMetadataAttribute("MauiDevFlowProject", "$(_MauiDevFlowProjectPath)")]
 [assembly: System.Reflection.AssemblyMetadataAttribute("MauiDevFlowTfm", "$(TargetFramework)")]</_MauiDevFlowMetadata>
     </PropertyGroup>
     <WriteLinesToFile File="$(_MauiDevFlowPortFile)"

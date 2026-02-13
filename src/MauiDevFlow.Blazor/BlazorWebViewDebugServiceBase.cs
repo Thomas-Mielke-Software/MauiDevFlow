@@ -10,6 +10,7 @@ public abstract class BlazorWebViewDebugServiceBase : IDisposable
     protected bool IsInitialized;
     private bool _disposed;
     private bool _injecting;
+    private int _cdpIdCounter = 1000;
     private CancellationTokenSource? _drainCts;
 
     /// <summary>Optional log callback for debug messages.</summary>
@@ -159,8 +160,25 @@ public abstract class BlazorWebViewDebugServiceBase : IDisposable
         try
         {
             var json = System.Text.Json.JsonDocument.Parse(cdpJson);
-            var id = json.RootElement.TryGetProperty("id", out var idProp) ? idProp.GetInt32() : 0;
+            var hasId = json.RootElement.TryGetProperty("id", out var idProp);
+            var id = hasId ? idProp.GetInt32() : 0;
             var method = json.RootElement.TryGetProperty("method", out var methodProp) ? methodProp.GetString() ?? "" : "";
+
+            // Chobitsu requires an id to dispatch responses; inject one if missing
+            if (!hasId)
+            {
+                id = System.Threading.Interlocked.Increment(ref _cdpIdCounter);
+                using var ms = new System.IO.MemoryStream();
+                using (var writer = new System.Text.Json.Utf8JsonWriter(ms))
+                {
+                    writer.WriteStartObject();
+                    writer.WriteNumber("id", id);
+                    foreach (var prop in json.RootElement.EnumerateObject())
+                        prop.WriteTo(writer);
+                    writer.WriteEndObject();
+                }
+                cdpJson = System.Text.Encoding.UTF8.GetString(ms.ToArray());
+            }
 
             // Handle methods that need native implementation
             if (method == "Input.insertText")

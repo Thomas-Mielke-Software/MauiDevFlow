@@ -41,12 +41,12 @@
 
     <!-- During project-to-project references, MauiDevFlow.Blazor's WebView dependency
          leaks static web assets (blazor.modules.json, blazor.webview.js) that conflict
-         with this project's own WebView reference. Remove the duplicates.
-         NOTE: NuGet consumers don't need this — the library's Disable* properties
-         prevent asset leakage in the package. -->
+         with this project's own WebView reference. Remove only the _framework/ duplicates,
+         preserving the library's own assets (chobitsu.js, JS initializer). -->
     <Target Name="ResolveDuplicateStaticWebAssets" BeforeTargets="ResolveStaticWebAssetsInputs">
         <ItemGroup>
-            <StaticWebAsset Remove="@(StaticWebAsset)" Condition="'%(SourceId)' == 'MauiDevFlow.Blazor'" />
+            <StaticWebAsset Remove="@(StaticWebAsset)"
+                Condition="'%(SourceId)' == 'MauiDevFlow.Blazor' AND $([System.String]::Copy('%(RelativePath)').StartsWith('_framework/'))" />
         </ItemGroup>
     </Target>
 

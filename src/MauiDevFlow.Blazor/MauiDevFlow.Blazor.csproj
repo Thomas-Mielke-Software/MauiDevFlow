@@ -11,6 +11,11 @@
          The consuming app's build will discover our .lib.module.js and include it. -->
     <GenerateJSModuleManifest>false</GenerateJSModuleManifest>
 
+    <!-- Disable static web asset fingerprinting — MAUI Blazor Hybrid's WebView file
+         provider does not resolve fingerprinted filenames, causing 404s for the
+         JS initializer and breaking Blazor startup. -->
+    <StaticWebAssetsFingerprintContent>false</StaticWebAssetsFingerprintContent>
+
     <!-- NuGet Package Metadata -->
     <PackageId>Redth.MauiDevFlow.Blazor</PackageId>
     <Description>Enable browser developer tools and Playwright MCP automation for .NET MAUI Blazor Hybrid apps. Connects Chrome DevTools Protocol to BlazorWebView via Chobitsu.</Description>
