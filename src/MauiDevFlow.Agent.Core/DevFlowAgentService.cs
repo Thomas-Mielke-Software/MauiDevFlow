@@ -18,6 +18,7 @@ public class DevFlowAgentService : IDisposable
     private readonly AgentHttpServer _server;
     private readonly VisualTreeWalker _treeWalker;
     private FileLogProvider? _logProvider;
+    private BrokerRegistration? _brokerRegistration;
     protected Application? _app;
     protected IDispatcher? _dispatcher;
     private bool _disposed;
@@ -54,6 +55,9 @@ public class DevFlowAgentService : IDisposable
     /// </summary>
     public void SetLogProvider(FileLogProvider provider)
         => _logProvider = provider;
+
+    public void SetBrokerRegistration(BrokerRegistration registration)
+        => _brokerRegistration = registration;
 
     /// <summary>
     /// Writes a log entry originating from the WebView/Blazor console.
@@ -767,6 +771,7 @@ public class DevFlowAgentService : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _brokerRegistration?.Dispose();
         _server.Dispose();
         _logProvider?.Dispose();
     }
