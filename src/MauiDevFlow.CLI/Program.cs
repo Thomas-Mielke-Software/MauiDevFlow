@@ -207,6 +207,30 @@ class Program
         mauiNavigateCmd.SetHandler(async (host, port, route) => await MauiNavigateAsync(host, port, route), agentHostOption, agentPortOption, navRouteArg);
         mauiCommand.Add(mauiNavigateCmd);
 
+        // MAUI scroll
+        var scrollElementIdOption = new Option<string?>("--element", "Element ID to scroll into view");
+        var scrollDeltaXOption = new Option<double>("--dx", () => 0, "Horizontal scroll delta");
+        var scrollDeltaYOption = new Option<double>("--dy", () => 0, "Vertical scroll delta");
+        var scrollAnimatedOption = new Option<bool>("--animated", () => true, "Animate the scroll");
+        var mauiScrollCmd = new Command("scroll", "Scroll content by delta or scroll element into view") { scrollElementIdOption, scrollDeltaXOption, scrollDeltaYOption, scrollAnimatedOption };
+        mauiScrollCmd.SetHandler(async (host, port, elementId, dx, dy, animated) =>
+            await MauiScrollAsync(host, port, elementId, dx, dy, animated),
+            agentHostOption, agentPortOption, scrollElementIdOption, scrollDeltaXOption, scrollDeltaYOption, scrollAnimatedOption);
+        mauiCommand.Add(mauiScrollCmd);
+
+        // MAUI focus
+        var focusIdArg = new Argument<string>("elementId", "Element ID to focus");
+        var mauiFocusCmd = new Command("focus", "Set focus to element") { focusIdArg };
+        mauiFocusCmd.SetHandler(async (host, port, id) => await MauiFocusAsync(host, port, id), agentHostOption, agentPortOption, focusIdArg);
+        mauiCommand.Add(mauiFocusCmd);
+
+        // MAUI resize
+        var resizeWidthArg = new Argument<int>("width", "Window width");
+        var resizeHeightArg = new Argument<int>("height", "Window height");
+        var mauiResizeCmd = new Command("resize", "Resize app window") { resizeWidthArg, resizeHeightArg };
+        mauiResizeCmd.SetHandler(async (host, port, w, h) => await MauiResizeAsync(host, port, w, h), agentHostOption, agentPortOption, resizeWidthArg, resizeHeightArg);
+        mauiCommand.Add(mauiResizeCmd);
+
         // MAUI alert subcommands — supports iOS simulator (apple CLI) and Mac Catalyst (macOS AX API)
         var alertCommand = new Command("alert", "Detect and dismiss system/app dialogs");
 
@@ -930,6 +954,42 @@ class Program
             using var client = new MauiDevFlow.Driver.AgentClient(host, port);
             var success = await client.NavigateAsync(route);
             Console.WriteLine(success ? $"Navigated to: {route}" : $"Failed to navigate to: {route}");
+        }
+        catch (Exception ex) { WriteError(ex.Message); }
+    }
+
+    private static async Task MauiScrollAsync(string host, int port, string? elementId, double dx, double dy, bool animated)
+    {
+        try
+        {
+            using var client = new MauiDevFlow.Driver.AgentClient(host, port);
+            var success = await client.ScrollAsync(elementId, dx, dy, animated);
+            if (elementId != null)
+                Console.WriteLine(success ? $"Scrolled to element: {elementId}" : $"Failed to scroll to element: {elementId}");
+            else
+                Console.WriteLine(success ? $"Scrolled by dx={dx}, dy={dy}" : "Failed to scroll");
+        }
+        catch (Exception ex) { WriteError(ex.Message); }
+    }
+
+    private static async Task MauiFocusAsync(string host, int port, string elementId)
+    {
+        try
+        {
+            using var client = new MauiDevFlow.Driver.AgentClient(host, port);
+            var success = await client.FocusAsync(elementId);
+            Console.WriteLine(success ? $"Focused: {elementId}" : $"Failed to focus: {elementId}");
+        }
+        catch (Exception ex) { WriteError(ex.Message); }
+    }
+
+    private static async Task MauiResizeAsync(string host, int port, int width, int height)
+    {
+        try
+        {
+            using var client = new MauiDevFlow.Driver.AgentClient(host, port);
+            var success = await client.ResizeAsync(width, height);
+            Console.WriteLine(success ? $"Resized to: {width}x{height}" : $"Failed to resize");
         }
         catch (Exception ex) { WriteError(ex.Message); }
     }

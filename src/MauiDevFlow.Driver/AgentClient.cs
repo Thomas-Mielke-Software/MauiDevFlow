@@ -101,6 +101,22 @@ public class AgentClient : IDisposable
     }
 
     /// <summary>
+    /// Scroll by delta or scroll an element into view.
+    /// </summary>
+    public async Task<bool> ScrollAsync(string? elementId = null, double deltaX = 0, double deltaY = 0, bool animated = true)
+    {
+        return await PostActionAsync("/api/action/scroll", new { elementId, deltaX, deltaY, animated });
+    }
+
+    /// <summary>
+    /// Resize the app window.
+    /// </summary>
+    public async Task<bool> ResizeAsync(int width, int height)
+    {
+        return await PostActionAsync("/api/action/resize", new { width, height });
+    }
+
+    /// <summary>
     /// Take a screenshot (returns PNG bytes).
     /// </summary>
     public async Task<byte[]?> ScreenshotAsync()

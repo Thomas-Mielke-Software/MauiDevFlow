@@ -79,10 +79,15 @@ asynchronously and then poll for the app to be ready. Do NOT wait for the proces
 it never will (until the app is closed).
 
 **Correct launch pattern:**
-1. Start `dotnet build -t:Run` in an **async/background shell** (e.g., `mode: "async"`)
-2. Read output from the async shell periodically to watch for build completion / app launch
-3. Poll `maui-devflow MAUI status` (or `maui-devflow list`) until the agent connects
-4. If the agent doesn't appear after ~60-90 seconds, check the async shell output for build errors
+1. **Kill the old app first** — if a previous instance is running, stop it before rebuilding.
+   Otherwise the old app's agent will still be registered with the broker, and polling
+   `maui-devflow MAUI status` will succeed against the stale instance instead of the new build.
+   - Stop the previous async shell (if you still have it), or kill the app process directly
+   - Verify with `maui-devflow list` that the old agent is gone before launching
+2. Start `dotnet build -t:Run` in an **async/background shell** (e.g., `mode: "async"`)
+3. Read output from the async shell periodically to watch for build completion / app launch
+4. Poll `maui-devflow MAUI status` (or `maui-devflow list`) until the agent connects
+5. If the agent doesn't appear after ~60-90 seconds, check the async shell output for build errors
 
 ```bash
 # iOS Simulator (run in async shell)
@@ -184,9 +189,16 @@ errors. Add temporary `ILogger` calls for more detail, rebuild, reproduce, and f
 
 ### 7. Rebuild
 
-After editing source code, rebuild: `dotnet build -f $TFM-<platform> -t:Run ...` (in async shell)
-→ poll `maui-devflow MAUI status` until connected → inspect. If the build fails, see
-[references/troubleshooting.md](references/troubleshooting.md).
+**Always kill the running app before rebuilding.** If the old instance is still running, its
+agent stays registered with the broker — polling `maui-devflow MAUI status` will succeed against
+the stale app instead of waiting for the new build.
+
+1. Stop the previous async shell or kill the app process
+2. Verify with `maui-devflow list` that the old agent is gone
+3. Run `dotnet build -f $TFM-<platform> -t:Run ...` in an async shell
+4. Poll `maui-devflow MAUI status` until connected → inspect
+
+If the build fails, see [references/troubleshooting.md](references/troubleshooting.md).
 
 ## Command Reference
 

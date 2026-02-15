@@ -679,14 +679,18 @@ public class DevFlowAgentService : IDisposable
                     var scrollView = FindAncestor<ScrollView>(ve);
                     if (scrollView != null)
                     {
-                        await scrollView.ScrollToAsync(ve, ScrollToPosition.MakeVisible, body.Animated);
+                        await ScrollWithTimeoutAsync(
+                            () => scrollView.ScrollToAsync(ve, ScrollToPosition.MakeVisible, body.Animated),
+                            () => scrollView.ScrollToAsync(ve, ScrollToPosition.MakeVisible, false));
                         return "ok";
                     }
 
                     // Maybe the element itself is a ScrollView
                     if (el is ScrollView sv)
                     {
-                        await sv.ScrollToAsync(body.DeltaX, body.DeltaY, body.Animated);
+                        await ScrollWithTimeoutAsync(
+                            () => sv.ScrollToAsync(body.DeltaX, body.DeltaY, body.Animated),
+                            () => sv.ScrollToAsync(body.DeltaX, body.DeltaY, false));
                         return "ok";
                     }
                 }
@@ -703,14 +707,33 @@ public class DevFlowAgentService : IDisposable
 
             var newX = targetScroll.ScrollX + body.DeltaX;
             var newY = targetScroll.ScrollY + body.DeltaY;
-            await targetScroll.ScrollToAsync(
-                Math.Max(0, newX),
-                Math.Max(0, newY),
-                body.Animated);
+            var x = Math.Max(0, newX);
+            var y = Math.Max(0, newY);
+            await ScrollWithTimeoutAsync(
+                () => targetScroll.ScrollToAsync(x, y, body.Animated),
+                () => targetScroll.ScrollToAsync(x, y, false));
             return "ok";
         });
 
         return result == "ok" ? HttpResponse.Ok("Scrolled") : HttpResponse.Error(result ?? "Scroll failed");
+    }
+
+    /// <summary>
+    /// Animated ScrollToAsync can deadlock on iOS when dispatched.
+    /// Fall back to non-animated scroll if the animated version doesn't complete in time.
+    /// </summary>
+    private static async Task ScrollWithTimeoutAsync(Func<Task> animatedScroll, Func<Task> fallbackScroll)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var scrollTask = animatedScroll();
+        var completed = await Task.WhenAny(scrollTask, Task.Delay(3000, cts.Token));
+        if (completed == scrollTask)
+        {
+            cts.Cancel();
+            return;
+        }
+        // Animated scroll timed out — fall back to non-animated
+        await fallbackScroll();
     }
 
     private static T? FindAncestor<T>(Element element) where T : Element
