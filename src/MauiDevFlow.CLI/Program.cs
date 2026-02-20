@@ -1521,9 +1521,22 @@ class Program
     private static async Task BrokerStatusAsync()
     {
         var port = Broker.BrokerClient.ReadBrokerPortPublic();
+
+        // No state file — try default port as fallback (broker may still be alive)
         if (port == null)
         {
-            Console.WriteLine("Broker: not running (no state file)");
+            try
+            {
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+                var response = await http.GetStringAsync($"http://localhost:{Broker.BrokerServer.DefaultPort}/api/health");
+                var doc = JsonDocument.Parse(response);
+                var agents = doc.RootElement.GetProperty("agents").GetInt32();
+                Console.WriteLine($"Broker: running on port {Broker.BrokerServer.DefaultPort} ({agents} agent(s) connected) [no state file]");
+                return;
+            }
+            catch { }
+
+            Console.WriteLine("Broker: not running");
             return;
         }
 
