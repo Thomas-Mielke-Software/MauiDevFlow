@@ -49,12 +49,47 @@ public abstract class BlazorWebViewDebugServiceBase : IDisposable
     /// </summary>
     public abstract void ConfigureHandler();
 
+    /// <summary>
+    /// Dispatches an async action to the main/UI thread and returns the result.
+    /// Override in platform subclasses that don't support MainThread.InvokeOnMainThreadAsync.
+    /// </summary>
+    protected virtual Task<T> RunOnMainThreadAsync<T>(Func<Task<T>> func)
+        => MainThread.InvokeOnMainThreadAsync(func);
+
+    /// <summary>
+    /// Dispatches an action to the main/UI thread and returns the result.
+    /// Override in platform subclasses that don't support MainThread.InvokeOnMainThreadAsync.
+    /// </summary>
+    protected virtual Task<T> RunOnMainThreadAsync<T>(Func<T> func)
+        => MainThread.InvokeOnMainThreadAsync(func);
+
+    /// <summary>
+    /// Dispatches an async action to the main/UI thread.
+    /// Override in platform subclasses that don't support MainThread.InvokeOnMainThreadAsync.
+    /// </summary>
+    protected virtual Task RunOnMainThreadAsync(Func<Task> func)
+        => MainThread.InvokeOnMainThreadAsync(func);
+
+    /// <summary>
+    /// Dispatches an action to the main/UI thread.
+    /// Override in platform subclasses that don't support MainThread.InvokeOnMainThreadAsync.
+    /// </summary>
+    protected virtual Task RunOnMainThreadAsync(Action action)
+        => MainThread.InvokeOnMainThreadAsync(action);
+
+    /// <summary>
+    /// Posts an action to the main/UI thread without waiting (fire-and-forget).
+    /// Override in platform subclasses that don't support MainThread.BeginInvokeOnMainThread.
+    /// </summary>
+    protected virtual void PostToMainThread(Action action)
+        => MainThread.BeginInvokeOnMainThread(action);
+
     public void Initialize()
     {
         if (IsInitialized && HasWebView)
         {
             Log("[BlazorDevFlow] WebView already initialized, injecting now");
-            MainThread.BeginInvokeOnMainThread(async () =>
+            PostToMainThread(async () =>
             {
                 await InjectDebugScriptAsync();
             });
@@ -200,7 +235,7 @@ public abstract class BlazorWebViewDebugServiceBase : IDisposable
             Log($"[BlazorDevFlow] SendCdpCommand: method={method}");
 
             // First eval: send the command and set up response capture
-            var sendResult = await MainThread.InvokeOnMainThreadAsync(async () =>
+            var sendResult = await RunOnMainThreadAsync(async () =>
             {
                 return await EvaluateJavaScriptAsync(sendScript);
             });
@@ -212,7 +247,7 @@ public abstract class BlazorWebViewDebugServiceBase : IDisposable
             string? result = null;
             for (int i = 0; i < 60; i++) // up to 3 seconds
             {
-                result = await MainThread.InvokeOnMainThreadAsync(async () =>
+                result = await RunOnMainThreadAsync(async () =>
                 {
                     return await EvaluateJavaScriptAsync(readScript);
                 });
@@ -265,7 +300,7 @@ public abstract class BlazorWebViewDebugServiceBase : IDisposable
             .Replace("%TEXT%", escapedText)
             .Replace("%TEXT_LENGTH%", text.Length.ToString());
 
-        await MainThread.InvokeOnMainThreadAsync(async () =>
+        await RunOnMainThreadAsync(async () =>
         {
             await EvaluateJavaScriptAsync(script);
         });
@@ -275,12 +310,12 @@ public abstract class BlazorWebViewDebugServiceBase : IDisposable
 
     private async Task<string> HandlePageReloadAsync(int id)
     {
-        await MainThread.InvokeOnMainThreadAsync(() =>
+        await RunOnMainThreadAsync(() =>
         {
             ReloadWebView();
         });
         await Task.Delay(1500);
-        await MainThread.InvokeOnMainThreadAsync(async () =>
+        await RunOnMainThreadAsync(async () =>
         {
             await InjectDebugScriptAsync();
         });
@@ -293,12 +328,12 @@ public abstract class BlazorWebViewDebugServiceBase : IDisposable
         var json = System.Text.Json.JsonDocument.Parse(cdpJson);
         var url = json.RootElement.GetProperty("params").GetProperty("url").GetString() ?? "";
 
-        await MainThread.InvokeOnMainThreadAsync(() =>
+        await RunOnMainThreadAsync(() =>
         {
             NavigateWebView(url);
         });
         await Task.Delay(1500);
-        await MainThread.InvokeOnMainThreadAsync(async () =>
+        await RunOnMainThreadAsync(async () =>
         {
             await InjectDebugScriptAsync();
         });
@@ -379,7 +414,7 @@ public abstract class BlazorWebViewDebugServiceBase : IDisposable
                     await Task.Delay(2000, ct);
                     if (!IsReady || WebViewLogCallback == null) continue;
 
-                    var raw = await MainThread.InvokeOnMainThreadAsync(async () =>
+                    var raw = await RunOnMainThreadAsync(async () =>
                     {
                         return await EvaluateJavaScriptAsync(drainScript);
                     });

@@ -31,6 +31,7 @@
   <!-- macOS AppKit backend (local dev: project ref; production: NuGet package) -->
   <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'macos'">
     <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\..\mauiplatforms\src\Platform.Maui.MacOS\Platform.Maui.MacOS.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\..\mauiplatforms\src\Platform.Maui.MacOS.BlazorWebView\Platform.Maui.MacOS.BlazorWebView.csproj" />
   </ItemGroup>
 
   <!-- Embed JS/HTML scripts as resources to avoid inline strings in C# -->
