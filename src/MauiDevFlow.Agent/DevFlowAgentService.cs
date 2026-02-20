@@ -1,11 +1,14 @@
 using Microsoft.Maui.Controls;
 using MauiDevFlow.Agent.Core;
+#if MACOS
+using AppKit;
+#endif
 
 namespace MauiDevFlow.Agent;
 
 /// <summary>
 /// Platform-specific agent service that provides native tap and screenshot
-/// implementations for Android, iOS, Mac Catalyst, and Windows.
+/// implementations for Android, iOS, Mac Catalyst, Windows, and macOS AppKit.
 /// </summary>
 public class PlatformAgentService : DevFlowAgentService
 {
@@ -32,13 +35,56 @@ public class PlatformAgentService : DevFlowAgentService
                 androidView.PerformClick();
                 return true;
             }
+#elif MACOS
+            if (platformView is NSButton button)
+            {
+                button.PerformClick(null);
+                return true;
+            }
+            if (platformView is NSControl nsControl && nsControl.Action != null)
+            {
+                nsControl.SendAction(nsControl.Action, nsControl.Target);
+                return true;
+            }
 #endif
         }
         catch { }
         return false;
     }
 
-#if WINDOWS
+#if MACOS
+    protected override async Task<byte[]?> CaptureScreenshotAsync(VisualElement rootElement)
+    {
+        try
+        {
+            var platformView = rootElement.Handler?.PlatformView as NSView;
+            if (platformView == null)
+                return await base.CaptureScreenshotAsync(rootElement);
+
+            var bounds = platformView.Bounds;
+            if (bounds.Width <= 0 || bounds.Height <= 0)
+                return await base.CaptureScreenshotAsync(rootElement);
+
+            // Use DataWithPdf to capture the view, then convert to PNG
+            var pdfData = platformView.DataWithPdfInsideRect(bounds);
+            if (pdfData == null)
+                return await base.CaptureScreenshotAsync(rootElement);
+
+            var image = new NSImage(pdfData);
+            var tiffData = image.AsTiff();
+            if (tiffData == null)
+                return await base.CaptureScreenshotAsync(rootElement);
+
+            var bitmapRep = new NSBitmapImageRep(tiffData);
+            var pngData = bitmapRep.RepresentationUsingTypeProperties(NSBitmapImageFileType.Png, null);
+            return pngData?.ToArray();
+        }
+        catch
+        {
+            return await base.CaptureScreenshotAsync(rootElement);
+        }
+    }
+#elif WINDOWS
     protected override async Task<byte[]?> CaptureScreenshotAsync(VisualElement rootElement)
     {
         // MAUI's VisualDiagnostics doesn't capture WebView2 GPU-rendered content on Windows.

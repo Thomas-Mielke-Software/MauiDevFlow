@@ -46,6 +46,7 @@ public static class AgentServiceExtensions
                     platform = OperatingSystem.IsAndroid() ? "Android"
                         : OperatingSystem.IsIOS() ? "iOS"
                         : OperatingSystem.IsMacCatalyst() ? "MacCatalyst"
+                        : OperatingSystem.IsMacOS() ? "macOS"
                         : OperatingSystem.IsWindows() ? "Windows"
                         : "Unknown";
                     appName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "unknown";
@@ -145,6 +146,28 @@ public static class AgentServiceExtensions
                         app.Dispatcher.Dispatch(() => service.Start(app, app.Dispatcher));
                         Console.WriteLine($"[MauiDevFlow] Agent started on port {options.Port}");
                     }
+                });
+            });
+#elif MACOS
+            lifecycle.AddMacOS(macos =>
+            {
+                macos.DidFinishLaunching(_ =>
+                {
+                    Task.Run(async () =>
+                    {
+                        for (int i = 0; i < 30; i++)
+                        {
+                            await Task.Delay(500);
+                            var app = Application.Current;
+                            if (app != null)
+                            {
+                                app.Dispatcher.Dispatch(() => service.Start(app, app.Dispatcher));
+                                Console.WriteLine($"[MauiDevFlow] Agent started on port {options.Port}");
+                                return;
+                            }
+                        }
+                        Console.WriteLine("[MauiDevFlow] Failed to start agent: Application.Current was null after 30 retries");
+                    });
                 });
             });
 #endif

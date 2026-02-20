@@ -1,11 +1,14 @@
 using Microsoft.Maui.Controls;
 using MauiDevFlow.Agent.Core;
+#if MACOS
+using AppKit;
+#endif
 
 namespace MauiDevFlow.Agent;
 
 /// <summary>
 /// Platform-specific visual tree walker that provides native view info
-/// for Android, iOS, Mac Catalyst, and Windows.
+/// for Android, iOS, Mac Catalyst, Windows, and macOS AppKit.
 /// </summary>
 public class PlatformVisualTreeWalker : VisualTreeWalker
 {
@@ -43,6 +46,31 @@ public class PlatformVisualTreeWalker : VisualTreeWalker
                     props["inputType"] = editText.InputType.ToString();
                 if (androidView.Clickable)
                     props["clickable"] = "true";
+                if (props.Count > 0)
+                    info.NativeProperties = props;
+            }
+#elif MACOS
+            if (platformView is NSView nsView)
+            {
+                var props = new Dictionary<string, string?>();
+                if (!string.IsNullOrEmpty(nsView.AccessibilityIdentifier))
+                    props["accessibilityIdentifier"] = nsView.AccessibilityIdentifier;
+                if (!string.IsNullOrEmpty(nsView.AccessibilityLabel))
+                    props["accessibilityLabel"] = nsView.AccessibilityLabel;
+                if (nsView is NSControl nsControl)
+                {
+                    props["isNSControl"] = "true";
+                    props["isEnabled"] = nsControl.Enabled.ToString();
+                }
+                if (nsView is NSButton nsButton)
+                    props["buttonTitle"] = nsButton.Title;
+                if (nsView is NSTextField nsTextField)
+                {
+                    props["stringValue"] = nsTextField.StringValue;
+                    props["isEditable"] = nsTextField.Editable.ToString();
+                }
+                props["isHidden"] = nsView.Hidden.ToString();
+                props["alphaValue"] = nsView.AlphaValue.ToString("F2");
                 if (props.Count > 0)
                     info.NativeProperties = props;
             }

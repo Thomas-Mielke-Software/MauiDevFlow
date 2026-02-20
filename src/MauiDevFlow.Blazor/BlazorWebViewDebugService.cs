@@ -1,4 +1,4 @@
-#if IOS || MACCATALYST
+#if IOS || MACCATALYST || MACOS
 using Microsoft.AspNetCore.Components.WebView.Maui;
 using Microsoft.Maui.Handlers;
 using WebKit;
