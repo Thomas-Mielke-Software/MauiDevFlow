@@ -430,6 +430,9 @@ public class DevFlowAgentService : IDisposable
                 case ToolbarItem ti:
                     ((IMenuItemController)ti).Activate();
                     return "ok";
+                case VisualTreeWalker.BackButtonMarker back:
+                    back.Navigation.PopAsync();
+                    return "ok";
                 case MenuItem mi:
                     ((IMenuItemController)mi).Activate();
                     return "ok";
