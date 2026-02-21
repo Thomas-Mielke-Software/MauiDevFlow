@@ -15,9 +15,9 @@
     <ProjectReference Include="..\MauiDevFlow.Agent.Core\MauiDevFlow.Agent.Core.csproj" />
   </ItemGroup>
 
-  <!-- macOS AppKit backend (local dev: project ref; production: NuGet package) -->
+  <!-- macOS AppKit backend -->
   <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'macos'">
-    <ProjectReference Include="$(MSBuildThisFileDirectory)..\..\..\mauiplatforms\src\Platform.Maui.MacOS\Platform.Maui.MacOS.csproj" />
+    <PackageReference Include="Platform.Maui.MacOS" Version="0.2.0-beta.1" />
   </ItemGroup>
 
   <ItemGroup>

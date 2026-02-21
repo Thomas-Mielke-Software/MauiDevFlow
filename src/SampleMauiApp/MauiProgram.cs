@@ -1,6 +1,10 @@
 ﻿using Microsoft.Extensions.Logging;
 using MauiDevFlow.Agent;
 using MauiDevFlow.Blazor;
+#if MACOS
+using Microsoft.Maui.Platform.MacOS.Hosting;
+using Microsoft.Maui.Essentials.MacOS;
+#endif
 
 namespace SampleMauiApp;
 
@@ -10,7 +14,12 @@ public static class MauiProgram
 	{
 		var builder = MauiApp.CreateBuilder();
 		builder
+#if MACOS
+			.UseMauiAppMacOS<App>()
+			.AddMacOSEssentials()
+#else
 			.UseMauiApp<App>()
+#endif
 			.ConfigureFonts(fonts =>
 			{
 				fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
@@ -18,6 +27,9 @@ public static class MauiProgram
 
 		// Blazor WebView
 		builder.Services.AddMauiBlazorWebView();
+#if MACOS
+		builder.AddMacOSBlazorWebView();
+#endif
 
 		// Shared data
 		builder.Services.AddSingleton<TodoService>();
