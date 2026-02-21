@@ -380,6 +380,32 @@ class Program
         listCmd.SetHandler(async () => await ListAgentsCommandAsync());
         rootCommand.Add(listCmd);
 
+        // ===== wait command (wait for agent to connect) =====
+        var waitTimeoutOption = new Option<int>(
+            ["--timeout", "-t"],
+            () => 120,
+            "Maximum seconds to wait for an agent to connect");
+        var waitProjectOption = new Option<string?>(
+            ["--project"],
+            () => null,
+            "Filter by project path (csproj). Resolves to full path for matching.");
+        var waitPlatformOption = new Option<string?>(
+            ["--wait-platform"],
+            () => null,
+            "Filter by platform (e.g., macOS, iOS, Android)");
+        var waitJsonOption = new Option<bool>(
+            "--json",
+            () => false,
+            "Output agent info as JSON instead of human-readable text");
+        var waitCmd = new Command("wait", "Wait for an agent to connect to the broker")
+        {
+            waitTimeoutOption, waitProjectOption, waitPlatformOption, waitJsonOption
+        };
+        waitCmd.SetHandler(async (timeout, project, waitPlatform, json) =>
+            await WaitForAgentCommandAsync(timeout, project, waitPlatform, json),
+            waitTimeoutOption, waitProjectOption, waitPlatformOption, waitJsonOption);
+        rootCommand.Add(waitCmd);
+
         // ===== batch command (interactive stdin/stdout) =====
         var batchDelayOption = new Option<int>("--delay", () => 250, "Delay in ms between commands");
         var batchContinueOption = new Option<bool>("--continue-on-error", () => false, "Continue executing after a command fails");
@@ -1661,6 +1687,70 @@ class Program
                 : $"{uptime.Minutes}m {uptime.Seconds}s";
             Console.WriteLine($"{a.Id,-14} {a.AppName,-20} {a.Platform,-14} {a.Tfm,-24} {a.Port,-6} {uptimeStr}");
         }
+    }
+
+    private static async Task WaitForAgentCommandAsync(int timeoutSeconds, string? projectFilter, string? platformFilter, bool json)
+    {
+        var brokerPort = await Broker.BrokerClient.EnsureBrokerRunningAsync();
+        if (brokerPort == null)
+        {
+            Console.Error.WriteLine("Error: Broker unavailable");
+            Environment.ExitCode = 1;
+            return;
+        }
+
+        // Resolve project filter to full path for matching
+        string? resolvedProject = null;
+        if (projectFilter != null)
+        {
+            resolvedProject = Path.GetFullPath(projectFilter);
+        }
+
+        var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
+        var pollInterval = TimeSpan.FromMilliseconds(500);
+        Broker.AgentRegistration? matched = null;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            var agents = await Broker.BrokerClient.ListAgentsAsync(brokerPort.Value);
+            if (agents != null && agents.Length > 0)
+            {
+                matched = FindMatchingAgent(agents, resolvedProject, platformFilter);
+                if (matched != null)
+                    break;
+            }
+
+            await Task.Delay(pollInterval);
+        }
+
+        if (matched == null)
+        {
+            Console.Error.WriteLine($"Timeout: no matching agent connected within {timeoutSeconds}s");
+            Environment.ExitCode = 1;
+            return;
+        }
+
+        if (json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(matched));
+        }
+        else
+        {
+            Console.WriteLine(matched.Port);
+        }
+    }
+
+    private static Broker.AgentRegistration? FindMatchingAgent(Broker.AgentRegistration[] agents, string? projectFilter, string? platformFilter)
+    {
+        foreach (var agent in agents)
+        {
+            if (projectFilter != null && !string.Equals(agent.Project, projectFilter, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (platformFilter != null && !agent.Platform.Contains(platformFilter, StringComparison.OrdinalIgnoreCase))
+                continue;
+            return agent;
+        }
+        return null;
     }
 
     // ===== Batch command: interactive stdin/stdout with JSONL responses =====
