@@ -322,12 +322,30 @@ For detailed platform-specific setup, simulator/emulator management, and trouble
 - **Linux / GTK**: See [references/linux.md](references/linux.md)
 - **Troubleshooting**: See [references/troubleshooting.md](references/troubleshooting.md)
 
+## ⚠️ Non-Disruptive Operation
+
+**CRITICAL:** Never run commands that steal focus, move windows, simulate mouse/keyboard input,
+or otherwise disrupt the user's desktop. The user is likely working on the same computer.
+
+**Never use:**
+- `osascript` to focus/activate windows, click UI elements, or send keystrokes
+- `screencapture` interactively (the MauiDevFlow screenshot command captures in-process instead)
+- `xdotool` focus/activate/key commands that affect the active window
+- Any command that moves the mouse cursor or simulates input at the OS level
+- `open -a` to bring apps to the foreground (use `open` only to launch, not to focus)
+
+**Instead:** All inspection and interaction goes through `maui-devflow` CLI commands, which
+communicate with the in-app agent over HTTP — no foreground focus required. If you need
+something that would require OS-level control (e.g., dismissing a system dialog outside the
+app), **ask the user** to do it manually rather than attempting automation that would hijack
+their input.
+
 ## Tips
 
 - **Use `maui-devflow batch`** for multi-step interactions — resolves port once, adds delays,
   returns structured JSONL. See [references/batch.md](references/batch.md).
 - **Always use `maui-devflow MAUI screenshot`** — captures in-process, app does NOT need
-  foreground focus. Never use `osascript` to bring windows forward for screenshots.
+  foreground focus.
 - Use `AutomationId` on important MAUI controls for stable element references.
 - For Blazor Hybrid, `cdp snapshot` is the most AI-friendly way to read page state.
 - Port discovery, multi-project setup, and custom ports: see [references/setup.md](references/setup.md#3b-port-configuration).
