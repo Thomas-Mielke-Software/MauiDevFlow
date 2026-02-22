@@ -16,8 +16,8 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
 
-      - name: Install MAUI workload
-        run: dotnet workload install maui
+      - name: Install workloads
+        run: dotnet workload install maui macos
 
       - name: Restore
         run: dotnet restore ci.slnf
@@ -40,8 +40,8 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
 
-      - name: Install MAUI workload
-        run: dotnet workload install maui
+      - name: Install workloads
+        run: dotnet workload install maui macos
 
       - name: Restore
         run: dotnet restore ci.slnf
