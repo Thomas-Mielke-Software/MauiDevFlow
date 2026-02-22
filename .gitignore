@@ -431,3 +431,6 @@ FodyWeavers.xsd
 # Don't ignore the NuGet content source: src/MauiDevFlow.Blazor/content/wwwroot/js/chobitsu.js
 **/wwwroot/js/chobitsu.js
 !**/content/wwwroot/js/chobitsu.js
+
+# Local skill version tracking (written by maui-devflow update-skill)
+.skill-version

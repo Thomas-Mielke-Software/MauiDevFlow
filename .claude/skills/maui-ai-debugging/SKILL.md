@@ -24,8 +24,9 @@ dotnet tool install --global androidsdk.tool    # Android only
 dotnet tool install --global appledev.tools     # iOS/Mac only
 ```
 
-Keep the skill up to date: `maui-devflow update-skill`. For full update and version checking
-procedures, see [references/setup.md](references/setup.md#checking-for-updates).
+Keep the skill up to date: `maui-devflow update-skill`. Check installed version vs remote
+with `maui-devflow skill-version`. For full update procedures, see
+[references/setup.md](references/setup.md#checking-for-updates).
 
 ## Integrating MauiDevFlow into a MAUI App
 

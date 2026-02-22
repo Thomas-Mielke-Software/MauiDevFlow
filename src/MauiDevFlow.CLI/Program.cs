@@ -353,6 +353,21 @@ class Program
         updateSkillCmd.SetHandler(async (force, output, branch) => await UpdateSkillAsync(force, output, branch), forceOption, outputDirOption, branchOption);
         rootCommand.Add(updateSkillCmd);
 
+        // ===== skill-version command =====
+        var skillVersionOutputOption = new Option<string?>(
+            ["--output", "-o"],
+            "Skill directory (defaults to current directory)");
+        var skillVersionBranchOption = new Option<string>(
+            ["--branch", "-b"],
+            () => "main",
+            "GitHub branch to check against");
+        var skillVersionCmd = new Command("skill-version", "Check the installed skill version and compare with remote")
+        {
+            skillVersionOutputOption, skillVersionBranchOption
+        };
+        skillVersionCmd.SetHandler(async (output, branch) => await SkillVersionAsync(output, branch), skillVersionOutputOption, skillVersionBranchOption);
+        rootCommand.Add(skillVersionCmd);
+
         // ===== broker commands =====
         var brokerCommand = new Command("broker", "Manage the MauiDevFlow broker daemon");
 
@@ -843,6 +858,100 @@ class Program
         Console.WriteLine(success == files.Count
             ? $"Done. {success} files updated."
             : $"Done. {success}/{files.Count} files updated.");
+
+        // Write .skill-version with the latest commit SHA
+        await WriteSkillVersionAsync(http, destBase, branch);
+    }
+
+    private static async Task WriteSkillVersionAsync(HttpClient http, string destBase, string branch)
+    {
+        try
+        {
+            var sha = await GetRemoteSkillCommitShaAsync(http, branch);
+            if (sha == null) return;
+
+            var versionInfo = new
+            {
+                commit = sha,
+                updatedAt = DateTime.UtcNow.ToString("o"),
+                branch
+            };
+            var versionPath = Path.Combine(destBase, ".skill-version");
+            await File.WriteAllTextAsync(versionPath,
+                JsonSerializer.Serialize(versionInfo, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch { /* non-fatal — version tracking is best-effort */ }
+    }
+
+    private static async Task<string?> GetRemoteSkillCommitShaAsync(HttpClient http, string branch)
+    {
+        var url = $"https://api.github.com/repos/{SkillRepo}/commits?path={SkillBasePath}&sha={branch}&per_page=1";
+        var json = await http.GetStringAsync(url);
+        var commits = JsonSerializer.Deserialize<JsonElement>(json);
+        foreach (var commit in commits.EnumerateArray())
+            return commit.GetProperty("sha").GetString();
+        return null;
+    }
+
+    private static async Task SkillVersionAsync(string? outputDir, string branch)
+    {
+        var root = outputDir ?? Directory.GetCurrentDirectory();
+        var destBase = Path.Combine(root, SkillBasePath);
+        var versionPath = Path.Combine(destBase, ".skill-version");
+
+        // Read local version
+        string? localSha = null;
+        string? localDate = null;
+        string? localBranch = null;
+        if (File.Exists(versionPath))
+        {
+            try
+            {
+                var json = await File.ReadAllTextAsync(versionPath);
+                var doc = JsonSerializer.Deserialize<JsonElement>(json);
+                localSha = doc.TryGetProperty("commit", out var c) ? c.GetString() : null;
+                localDate = doc.TryGetProperty("updatedAt", out var d) ? d.GetString() : null;
+                localBranch = doc.TryGetProperty("branch", out var b) ? b.GetString() : null;
+            }
+            catch { /* corrupt file */ }
+        }
+
+        if (localSha == null)
+        {
+            Console.WriteLine("No local skill version found.");
+            Console.WriteLine("Run 'maui-devflow update-skill' to install the skill and track its version.");
+            return;
+        }
+
+        Console.WriteLine($"Installed: {localSha[..12]} (branch: {localBranch ?? "unknown"})");
+        if (localDate != null && DateTime.TryParse(localDate, out var dt))
+            Console.WriteLine($"Updated:   {dt:yyyy-MM-dd HH:mm:ss} UTC");
+
+        // Check remote
+        using var http = new HttpClient();
+        http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("MauiDevFlow-CLI", "1.0"));
+        http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+
+        try
+        {
+            var remoteSha = await GetRemoteSkillCommitShaAsync(http, branch);
+            if (remoteSha == null)
+            {
+                Console.WriteLine("Could not fetch remote version.");
+                return;
+            }
+
+            Console.WriteLine($"Remote:    {remoteSha[..12]} (branch: {branch})");
+
+            if (string.Equals(localSha, remoteSha, StringComparison.OrdinalIgnoreCase))
+                Console.WriteLine("\n✓ Skill is up to date.");
+            else
+                Console.WriteLine("\n⚠ Update available! Run 'maui-devflow update-skill' to get the latest version.");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Could not check remote: {ex.Message}");
+        }
     }
 
     private static async Task<List<string>> GetSkillFilesFromGitHubAsync(HttpClient http, string branch)
