@@ -3,12 +3,12 @@ name: maui-ai-debugging
 description: >
   End-to-end workflow for building, deploying, inspecting, and debugging .NET MAUI and MAUI Blazor Hybrid apps
   as an AI agent. Use when: (1) Building or running a MAUI app on iOS simulator, Android emulator, Mac Catalyst,
-  or Linux/GTK, (2) Inspecting or interacting with a running app's UI (visual tree, tapping, filling text,
-  screenshots, property queries), (3) Debugging Blazor WebView content via CDP, (4) Managing simulators or
-  emulators, (5) Setting up MauiDevFlow in a MAUI project, (6) Completing a build-deploy-inspect-fix feedback
-  loop, (7) Handling permission dialogs and system alerts, (8) Managing multiple simultaneous apps via the
-  broker daemon. Covers: maui-devflow CLI, androidsdk.tool, appledev.tools, adb, xcrun simctl, xdotool,
-  and dotnet build/run for all MAUI target platforms including Linux/GTK.
+  macOS (AppKit), or Linux/GTK, (2) Inspecting or interacting with a running app's UI (visual tree, tapping,
+  filling text, screenshots, property queries), (3) Debugging Blazor WebView content via CDP, (4) Managing
+  simulators or emulators, (5) Setting up MauiDevFlow in a MAUI project, (6) Completing a build-deploy-inspect-fix
+  feedback loop, (7) Handling permission dialogs and system alerts, (8) Managing multiple simultaneous apps via
+  the broker daemon. Covers: maui-devflow CLI, androidsdk.tool, appledev.tools, adb, xcrun simctl, xdotool,
+  and dotnet build/run for all MAUI target platforms including macOS (AppKit) and Linux/GTK.
 ---
 
 # MAUI AI Debugging
@@ -34,11 +34,13 @@ For complete setup instructions, see [references/setup.md](references/setup.md).
 **Quick summary:**
 1. Add NuGet packages (`Redth.MauiDevFlow.Agent`, and `Redth.MauiDevFlow.Blazor` for Blazor Hybrid)
    - For **Linux/GTK apps** (detected via `grep -i 'GirCore\|Maui\.Gtk' *.csproj`), use `Agent.Gtk` and `Blazor.Gtk` instead
+   - For **macOS (AppKit) apps** (detected via `grep -i 'Platform\.Maui\.MacOS' *.csproj`), the standard `Agent` and `Blazor` packages include macOS support
 2. Register in `MauiProgram.cs` inside `#if DEBUG`
 3. For Blazor Hybrid: chobitsu.js is auto-injected (no manual script tag needed)
 4. For Mac Catalyst: ensure `network.server` entitlement
 5. For Android: run `adb reverse` for broker + agent ports
 6. For Linux: no special network setup needed (direct localhost)
+7. For macOS (AppKit): separate app head project, uses `open App.app` to launch. See [references/macos.md](references/macos.md)
 
 ## Core Workflow
 
@@ -56,7 +58,7 @@ android avd list                                              # list AVDs
 android avd start --name <avd-name>                           # start emulator
 ```
 
-**Mac Catalyst / Linux/GTK:** No device setup needed — runs as desktop app.
+**Mac Catalyst / macOS (AppKit) / Linux/GTK:** No device setup needed — runs as desktop app.
 
 ### 2. Detect the TFM
 
@@ -95,6 +97,10 @@ dotnet build -f $TFM-android -t:Run
 
 # Mac Catalyst (run in async shell)
 dotnet build -f $TFM-maccatalyst -t:Run
+
+# macOS AppKit (build, then launch with `open`)
+dotnet build -f $TFM-macos <path-to-macos-project>
+open path/to/bin/Debug/$TFM-macos/osx-arm64/AppName.app
 
 # Linux/GTK (run in async shell)
 dotnet run --project <path-to-gtk-project>
@@ -208,7 +214,7 @@ maui-devflow MAUI recording stop
 **Platform tools used automatically:**
 - **Android:** `adb screenrecord` (max 180s, capped with warning)
 - **iOS Simulator:** `xcrun simctl io recordVideo`
-- **Mac Catalyst:** `screencapture -v` (targets app window when possible)
+- **Mac Catalyst / macOS (AppKit):** `screencapture -v` (targets app window when possible)
 - **Windows/Linux:** `ffmpeg` (must be on PATH)
 
 **Options:** `--timeout <seconds>` (default 30), `--output <path>` (default `recording_<timestamp>.mp4`).
@@ -355,6 +361,7 @@ For detailed platform-specific setup, simulator/emulator management, and trouble
 
 - **Setup & Installation**: See [references/setup.md](references/setup.md)
 - **iOS / Mac Catalyst**: See [references/ios-and-mac.md](references/ios-and-mac.md)
+- **macOS (AppKit)**: See [references/macos.md](references/macos.md)
 - **Android**: See [references/android.md](references/android.md)
 - **Linux / GTK**: See [references/linux.md](references/linux.md)
 - **Troubleshooting**: See [references/troubleshooting.md](references/troubleshooting.md)
@@ -390,6 +397,6 @@ when run from the project directory.
 - The visual tree only reflects what's currently rendered. Off-screen items in CollectionView
   may not appear until scrolled into view.
 - For Blazor Hybrid, `cdp snapshot` is the most AI-friendly way to read page state.
-- Build times: Mac Catalyst ~5-10s, iOS ~30-60s, Android ~30-90s, Linux/GTK ~5-10s.
+- Build times: Mac Catalyst ~5-10s, macOS (AppKit) ~10-15s, iOS ~30-60s, Android ~30-90s, Linux/GTK ~5-10s.
 - After Android deploy, always run `adb reverse tcp:19223` for broker + `adb forward` for agent.
 - Both MAUI native and CDP commands share a single port — no separate WebSocket endpoint.
