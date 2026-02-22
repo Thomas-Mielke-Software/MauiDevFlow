@@ -142,6 +142,19 @@ Both the MSBuild targets and the CLI read this file automatically:
 
 **Port priority:** Explicit `--agent-port` > Broker discovery > `.mauidevflow` > default 9223.
 
+**How port discovery works:** When you run any `MAUI` or `cdp` command, the CLI:
+1. Auto-starts the broker if not running
+2. Queries the broker for agents matching the current project (`.csproj` in cwd)
+3. If one agent matches → uses its port automatically
+4. If multiple match → prints a disambiguation table to stderr
+5. Falls back to `.mauidevflow` config file → default 9223
+
+**Multiple apps simultaneously:** The broker assigns unique ports from range 10223–10899.
+Use `maui-devflow list` to see all agents, then target a specific one:
+```bash
+maui-devflow MAUI status --agent-port 10224    # target specific agent
+```
+
 **Blazor options:**
 - `Enabled` — Enable/disable CDP support (default: true)
 - `EnableWebViewInspection` — Enable WebView inspection (default: true)
