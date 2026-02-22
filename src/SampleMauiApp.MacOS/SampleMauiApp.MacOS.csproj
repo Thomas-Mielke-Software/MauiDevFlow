@@ -14,9 +14,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Platform.Maui.MacOS" Version="0.2.0-beta.1" />
-    <PackageReference Include="Platform.Maui.MacOS.BlazorWebView" Version="0.2.0-beta.1" />
-    <PackageReference Include="Platform.Maui.Essentials.MacOS" Version="0.2.0-beta.1" />
+    <PackageReference Include="Platform.Maui.MacOS" Version="0.2.0-beta.2" />
+    <PackageReference Include="Platform.Maui.MacOS.BlazorWebView" Version="0.2.0-beta.2" />
+    <PackageReference Include="Platform.Maui.Essentials.MacOS" Version="0.2.0-beta.2" />
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)" />
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
@@ -60,28 +60,10 @@
     <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
-  <!-- Bundle wwwroot for Blazor WebView -->
+  <!-- Bundle wwwroot for Blazor WebView (non-static-web-asset content like app.css, index.html) -->
   <ItemGroup>
     <BundleResource Include="wwwroot\**" Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
-
-  <!-- Bundle Blazor framework files and chobitsu.js into the macOS app bundle -->
-  <Target Name="_MacOSBundleBlazorFramework"
-          AfterTargets="_CopyResolvedFilesToPublishPreserveNewest"
-          Condition="'$(AppBundleDir)' != ''">
-    <ItemGroup>
-      <_BlazorWebViewJs Include="$(NuGetPackageRoot)microsoft.aspnetcore.components.webview/*/staticwebassets/blazor.webview.js" />
-    </ItemGroup>
-    <MakeDir Directories="$(AppBundleDir)/Contents/Resources/wwwroot/_framework" />
-    <Copy SourceFiles="@(_BlazorWebViewJs)"
-          DestinationFolder="$(AppBundleDir)/Contents/Resources/wwwroot/_framework"
-          SkipUnchangedFiles="true" />
-    <WriteLinesToFile File="$(AppBundleDir)/Contents/Resources/wwwroot/_framework/blazor.modules.json"
-                     Lines="[]" Overwrite="true" />
-    <Copy SourceFiles="..\MauiDevFlow.Blazor\wwwroot\chobitsu.js"
-          DestinationFolder="$(AppBundleDir)/Contents/Resources/wwwroot"
-          SkipUnchangedFiles="true" />
-  </Target>
 
   <!-- Remove duplicate static web assets from MauiDevFlow.Blazor -->
   <Target Name="ResolveDuplicateStaticWebAssets" BeforeTargets="ResolveStaticWebAssetsInputs">
