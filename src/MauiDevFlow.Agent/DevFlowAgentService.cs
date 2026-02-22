@@ -1,11 +1,15 @@
 using Microsoft.Maui.Controls;
 using MauiDevFlow.Agent.Core;
+#if MACOS
+using AppKit;
+using Foundation;
+#endif
 
 namespace MauiDevFlow.Agent;
 
 /// <summary>
 /// Platform-specific agent service that provides native tap and screenshot
-/// implementations for Android, iOS, Mac Catalyst, and Windows.
+/// implementations for Android, iOS, Mac Catalyst, Windows, and macOS AppKit.
 /// </summary>
 public class PlatformAgentService : DevFlowAgentService
 {
@@ -32,13 +36,107 @@ public class PlatformAgentService : DevFlowAgentService
                 androidView.PerformClick();
                 return true;
             }
+#elif MACOS
+            if (platformView is NSButton button)
+            {
+                button.PerformClick(null);
+                return true;
+            }
+            if (platformView is NSControl nsControl && nsControl.Action != null)
+            {
+                nsControl.SendAction(nsControl.Action, nsControl.Target);
+                return true;
+            }
 #endif
         }
         catch { }
         return false;
     }
 
-#if WINDOWS
+#if MACOS
+    protected override async Task<byte[]?> CaptureScreenshotAsync(VisualElement rootElement)
+    {
+        try
+        {
+            // Get the window - try KeyWindow first, then find any visible window via MAUI
+            var window = NSApplication.SharedApplication.KeyWindow;
+            if (window == null)
+            {
+                var mauiWindow = Microsoft.Maui.Controls.Application.Current?.Windows.FirstOrDefault();
+                if (mauiWindow?.Handler?.PlatformView is NSWindow nsWindow)
+                    window = nsWindow;
+            }
+
+            // Use CGWindowListCreateImage for composited capture including layer-backed controls
+            if (window != null)
+            {
+                var pngBytes = CaptureWindowViaCG(window);
+                if (pngBytes != null)
+                    return pngBytes;
+            }
+
+            // Fallback: DataWithPdfInsideRect (misses layer-backed controls like NSButton, NSSlider)
+            var contentView = window?.ContentView;
+            if (contentView != null)
+            {
+                var bounds = contentView.Bounds;
+                if (bounds.Width > 0 && bounds.Height > 0)
+                {
+                    var pdfData = contentView.DataWithPdfInsideRect(bounds);
+                    if (pdfData != null)
+                    {
+                        var image = new NSImage(pdfData);
+                        var tiffData = image.AsTiff();
+                        if (tiffData != null)
+                        {
+                            var bitmapRep = new NSBitmapImageRep(tiffData);
+                            var pngData = bitmapRep.RepresentationUsingTypeProperties(
+                                NSBitmapImageFileType.Png, new NSDictionary());
+                            return pngData?.ToArray();
+                        }
+                    }
+                }
+            }
+        }
+        catch { }
+
+        return await base.CaptureScreenshotAsync(rootElement);
+    }
+
+    [System.Runtime.InteropServices.DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+    static extern IntPtr CGWindowListCreateImage(
+        CoreGraphics.CGRect screenBounds,
+        uint listOption,
+        uint windowID,
+        uint imageOption);
+
+    private static byte[]? CaptureWindowViaCG(NSWindow window)
+    {
+        try
+        {
+            // kCGWindowListOptionIncludingWindow = 0x08, kCGWindowImageBoundsIgnoreFraming = 0x01
+            var cgImagePtr = CGWindowListCreateImage(
+                CoreGraphics.CGRect.Null, 0x08, (uint)window.WindowNumber, 0x01);
+
+            if (cgImagePtr == IntPtr.Zero)
+                return null;
+
+            var cgImage = ObjCRuntime.Runtime.GetINativeObject<CoreGraphics.CGImage>(
+                cgImagePtr, owns: true);
+            if (cgImage == null)
+                return null;
+
+            var bitmapRep = new NSBitmapImageRep(cgImage);
+            var pngData = bitmapRep.RepresentationUsingTypeProperties(
+                NSBitmapImageFileType.Png, new NSDictionary());
+            return pngData?.ToArray();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+#elif WINDOWS
     protected override async Task<byte[]?> CaptureScreenshotAsync(VisualElement rootElement)
     {
         // MAUI's VisualDiagnostics doesn't capture WebView2 GPU-rendered content on Windows.

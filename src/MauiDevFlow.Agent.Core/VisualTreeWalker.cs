@@ -8,13 +8,22 @@ namespace MauiDevFlow.Agent.Core;
 /// Walks the MAUI visual tree and produces ElementInfo representations.
 /// Uses IVisualTreeElement.GetVisualChildren() for tree traversal.
 /// Maintains a session-scoped element ID dictionary for stable references.
-/// Also maps non-visual elements (ToolbarItems, MenuItems) for interaction.
+/// Also maps non-visual elements (ToolbarItems, MenuItems, navigation back button) for interaction.
 /// </summary>
 public class VisualTreeWalker
 {
     private readonly ConcurrentDictionary<string, WeakReference<IVisualTreeElement>> _elementMap = new();
     private readonly ConcurrentDictionary<IVisualTreeElement, string> _reverseMap = new(ReferenceEqualityComparer.Instance);
     private readonly ConcurrentDictionary<string, WeakReference<object>> _objectMap = new();
+
+    /// <summary>
+    /// Marker object representing the navigation back button in Shell or NavigationPage.
+    /// </summary>
+    public class BackButtonMarker
+    {
+        public INavigation Navigation { get; init; } = null!;
+        public string Title { get; init; } = "Back";
+    }
 
     /// <summary>
     /// Looks up a previously-mapped element by its ID.
@@ -105,13 +114,18 @@ public class VisualTreeWalker
         }
 
         // Add ToolbarItems as synthetic children of Pages
-        if (element is Page page && page.ToolbarItems.Count > 0)
+        if (element is Page page)
         {
             foreach (var toolbarItem in page.ToolbarItems)
             {
                 var tiInfo = CreateToolbarItemInfo(toolbarItem, id);
                 info.Children.Add(tiInfo);
             }
+
+            // Add synthetic back button when there's a navigation stack
+            var backInfo = CreateBackButtonInfo(page, id);
+            if (backInfo != null)
+                info.Children.Add(backInfo);
         }
 
         if (info.Children.Count == 0)
@@ -151,7 +165,7 @@ public class VisualTreeWalker
             QueryRecursive(scPage, type, automationId, text, id, results);
         }
 
-        // Also query ToolbarItems on Pages
+        // Also query ToolbarItems and back button on Pages
         if (element is Page page)
         {
             foreach (var toolbarItem in page.ToolbarItems)
@@ -159,6 +173,10 @@ public class VisualTreeWalker
                 var tiInfo = CreateToolbarItemInfo(toolbarItem, id);
                 MatchAndAdd(tiInfo, type, automationId, text, results);
             }
+
+            var backInfo = CreateBackButtonInfo(page, id);
+            if (backInfo != null)
+                MatchAndAdd(backInfo, type, automationId, text, results);
         }
     }
 
@@ -253,6 +271,73 @@ public class VisualTreeWalker
             IsVisible = true,
             IsEnabled = item.IsEnabled,
         };
+    }
+
+    private ElementInfo? CreateBackButtonInfo(Page page, string parentId)
+    {
+        // Check NavigationPage stack — only add to the top page
+        INavigation? nav = null;
+        string title = "Back";
+
+        var navPage = FindAncestor<NavigationPage>(page);
+        if (navPage != null && navPage.Navigation.NavigationStack.Count > 1
+            && navPage.CurrentPage == page)
+        {
+            nav = navPage.Navigation;
+            var prev = nav.NavigationStack[nav.NavigationStack.Count - 2];
+            if (prev != null && !string.IsNullOrEmpty(prev.Title))
+                title = prev.Title;
+        }
+
+        // Check Shell's ShellSection navigation stack — only for the current top page
+        if (nav == null)
+        {
+            var shell = FindAncestor<Shell>(page);
+            if (shell == null)
+            {
+                try { if (page.Window?.Page is Shell windowShell) shell = windowShell; }
+                catch { }
+            }
+            if (shell?.CurrentItem?.CurrentItem is ShellSection section)
+            {
+                var navStack = section.Navigation?.NavigationStack;
+                if (navStack != null && navStack.Count > 1 && navStack[^1] == page)
+                {
+                    nav = section.Navigation;
+                    var prev = navStack[navStack.Count - 2];
+                    if (prev != null && !string.IsNullOrEmpty(prev.Title))
+                        title = prev.Title;
+                }
+            }
+        }
+
+        if (nav == null)
+            return null;
+
+        var marker = new BackButtonMarker { Navigation = nav, Title = title };
+        var id = GetOrCreateObjectId(marker, "BackButton");
+        return new ElementInfo
+        {
+            Id = id,
+            ParentId = parentId,
+            Type = "BackButton",
+            FullType = "MauiDevFlow.Agent.Core.BackButton",
+            AutomationId = "BackButton",
+            Text = $"← {title}",
+            IsVisible = true,
+            IsEnabled = true,
+        };
+    }
+
+    private static T? FindAncestor<T>(Element? element) where T : Element
+    {
+        while (element != null)
+        {
+            if (element is T match)
+                return match;
+            element = element.Parent;
+        }
+        return null;
     }
 
     private ElementInfo CreateElementInfo(IVisualTreeElement element, string id, string? parentId)

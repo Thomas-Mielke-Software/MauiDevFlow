@@ -16,12 +16,17 @@
   <Target Name="_SetMauiDevFlowPort" BeforeTargets="CoreCompile">
     <PropertyGroup>
       <_MauiDevFlowPortFile>$(IntermediateOutputPath)MauiDevFlowPort.g.cs</_MauiDevFlowPortFile>
+      <_MauiDevFlowMetadata></_MauiDevFlowMetadata>
+      <_MauiDevFlowMetadata Condition="'$(MauiDevFlowPort)' != ''">$(_MauiDevFlowMetadata)[assembly: System.Reflection.AssemblyMetadataAttribute("MauiDevFlowPort", "$(MauiDevFlowPort)")]
+</_MauiDevFlowMetadata>
+      <_MauiDevFlowProjectPath>$([MSBuild]::ValueOrDefault('$(MSBuildProjectFullPath)','').Replace('\','\\'))</_MauiDevFlowProjectPath>
+      <_MauiDevFlowMetadata>$(_MauiDevFlowMetadata)[assembly: System.Reflection.AssemblyMetadataAttribute("MauiDevFlowProject", "$(_MauiDevFlowProjectPath)")]
+[assembly: System.Reflection.AssemblyMetadataAttribute("MauiDevFlowTfm", "$(TargetFramework)")]</_MauiDevFlowMetadata>
     </PropertyGroup>
     <WriteLinesToFile File="$(_MauiDevFlowPortFile)"
-                     Lines="[assembly: System.Reflection.AssemblyMetadataAttribute(&quot;MauiDevFlowPort&quot;, &quot;$(MauiDevFlowPort)&quot;)]"
-                     Overwrite="true"
-                     Condition="'$(MauiDevFlowPort)' != ''" />
-    <ItemGroup Condition="'$(MauiDevFlowPort)' != ''">
+                     Lines="$(_MauiDevFlowMetadata)"
+                     Overwrite="true" />
+    <ItemGroup>
       <Compile Include="$(_MauiDevFlowPortFile)" />
     </ItemGroup>
   </Target>

@@ -128,6 +128,9 @@ dotnet tool install --global appledev.tools     # apple (simulators, provisionin
 ### Verify It Works
 
 ```bash
+# Wait for an agent to connect (blocks until ready)
+maui-devflow wait
+
 # List all connected agents (via broker)
 maui-devflow list
 
@@ -146,6 +149,11 @@ maui-devflow MAUI logs --limit 50
 # Filter by source (native ILogger or Blazor WebView console)
 maui-devflow MAUI logs --source webview
 maui-devflow MAUI logs --source native
+
+# Screen recording (start/stop)
+maui-devflow MAUI recording start --timeout 30
+# ... interact with the app ...
+maui-devflow MAUI recording stop
 
 # Live edit native properties (no rebuild)
 maui-devflow MAUI set-property HeaderLabel TextColor "Tomato"

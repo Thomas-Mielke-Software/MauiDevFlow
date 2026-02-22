@@ -185,6 +185,29 @@ class Program
         mauiScreenshotCmd.SetHandler(async (host, port, output) => await MauiScreenshotAsync(host, port, output), agentHostOption, agentPortOption, screenshotOutputOption);
         mauiCommand.Add(mauiScreenshotCmd);
 
+        // MAUI recording subcommands
+        var recordingCommand = new Command("recording", "Screen recording (start/stop/status)");
+
+        var recordingOutputOption = new Option<string?>("--output", "Output file path");
+        var recordingTimeoutOption = new Option<int>("--timeout", () => 30, "Max recording duration in seconds");
+        var recordingStartCmd = new Command("start", "Start screen recording") { recordingOutputOption, recordingTimeoutOption };
+        recordingStartCmd.SetHandler(async (host, port, platform, output, timeout) =>
+            await RecordingStartAsync(host, port, platform, output, timeout),
+            agentHostOption, agentPortOption, platformOption, recordingOutputOption, recordingTimeoutOption);
+        recordingCommand.Add(recordingStartCmd);
+
+        var recordingStopCmd = new Command("stop", "Stop active recording");
+        recordingStopCmd.SetHandler(async (host, port, platform) =>
+            await RecordingStopAsync(host, port, platform),
+            agentHostOption, agentPortOption, platformOption);
+        recordingCommand.Add(recordingStopCmd);
+
+        var recordingStatusCmd = new Command("status", "Check if a recording is in progress");
+        recordingStatusCmd.SetHandler(() => RecordingStatusAsync());
+        recordingCommand.Add(recordingStatusCmd);
+
+        mauiCommand.Add(recordingCommand);
+
         // MAUI property
         var propIdArg = new Argument<string>("elementId", "Element ID");
         var propNameArg = new Argument<string>("propertyName", "Property name");
@@ -356,6 +379,32 @@ class Program
         var listCmd = new Command("list", "List all connected agents");
         listCmd.SetHandler(async () => await ListAgentsCommandAsync());
         rootCommand.Add(listCmd);
+
+        // ===== wait command (wait for agent to connect) =====
+        var waitTimeoutOption = new Option<int>(
+            ["--timeout", "-t"],
+            () => 120,
+            "Maximum seconds to wait for an agent to connect");
+        var waitProjectOption = new Option<string?>(
+            ["--project"],
+            () => null,
+            "Filter by project path (csproj). Resolves to full path for matching.");
+        var waitPlatformOption = new Option<string?>(
+            ["--wait-platform"],
+            () => null,
+            "Filter by platform (e.g., macOS, iOS, Android)");
+        var waitJsonOption = new Option<bool>(
+            "--json",
+            () => false,
+            "Output agent info as JSON instead of human-readable text");
+        var waitCmd = new Command("wait", "Wait for an agent to connect to the broker")
+        {
+            waitTimeoutOption, waitProjectOption, waitPlatformOption, waitJsonOption
+        };
+        waitCmd.SetHandler(async (timeout, project, waitPlatform, json) =>
+            await WaitForAgentCommandAsync(timeout, project, waitPlatform, json),
+            waitTimeoutOption, waitProjectOption, waitPlatformOption, waitJsonOption);
+        rootCommand.Add(waitCmd);
 
         // ===== batch command (interactive stdin/stdout) =====
         var batchDelayOption = new Option<int>("--delay", () => 250, "Delay in ms between commands");
@@ -928,6 +977,48 @@ class Program
             Console.WriteLine($"Screenshot saved: {Path.GetFullPath(filename)} ({data.Length} bytes)");
         }
         catch (Exception ex) { WriteError(ex.Message); }
+    }
+
+    private static async Task RecordingStartAsync(string host, int port, string platform, string? output, int timeout)
+    {
+        try
+        {
+            var filename = output ?? $"recording_{DateTime.Now:yyyyMMdd_HHmmss}.mp4";
+            using var driver = MauiDevFlow.Driver.AppDriverFactory.Create(platform);
+            await driver.StartRecordingAsync(filename, timeout);
+            Console.WriteLine($"Recording started (timeout: {timeout}s)");
+            Console.WriteLine($"Output: {Path.GetFullPath(filename)}");
+        }
+        catch (Exception ex) { WriteError(ex.Message); }
+    }
+
+    private static async Task RecordingStopAsync(string host, int port, string platform)
+    {
+        try
+        {
+            using var driver = MauiDevFlow.Driver.AppDriverFactory.Create(platform);
+            var outputFile = await driver.StopRecordingAsync();
+            var size = File.Exists(outputFile) ? new FileInfo(outputFile).Length : 0;
+            Console.WriteLine($"Recording saved: {outputFile} ({size} bytes)");
+        }
+        catch (Exception ex) { WriteError(ex.Message); }
+    }
+
+    private static void RecordingStatusAsync()
+    {
+        var state = MauiDevFlow.Driver.RecordingStateManager.Load();
+        if (state == null || !MauiDevFlow.Driver.RecordingStateManager.IsRecording())
+        {
+            Console.WriteLine("No active recording.");
+            return;
+        }
+
+        var elapsed = DateTimeOffset.UtcNow - state.StartedAt;
+        Console.WriteLine($"Recording in progress:");
+        Console.WriteLine($"  Platform: {state.Platform}");
+        Console.WriteLine($"  Output:   {state.OutputFile}");
+        Console.WriteLine($"  Elapsed:  {elapsed.TotalSeconds:F0}s / {state.TimeoutSeconds}s");
+        Console.WriteLine($"  PID:      {state.RecordingPid}");
     }
 
     private static async Task MauiPropertyAsync(string host, int port, string elementId, string propertyName)
@@ -1521,9 +1612,22 @@ class Program
     private static async Task BrokerStatusAsync()
     {
         var port = Broker.BrokerClient.ReadBrokerPortPublic();
+
+        // No state file — try default port as fallback (broker may still be alive)
         if (port == null)
         {
-            Console.WriteLine("Broker: not running (no state file)");
+            try
+            {
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+                var response = await http.GetStringAsync($"http://localhost:{Broker.BrokerServer.DefaultPort}/api/health");
+                var doc = JsonDocument.Parse(response);
+                var agents = doc.RootElement.GetProperty("agents").GetInt32();
+                Console.WriteLine($"Broker: running on port {Broker.BrokerServer.DefaultPort} ({agents} agent(s) connected) [no state file]");
+                return;
+            }
+            catch { }
+
+            Console.WriteLine("Broker: not running");
             return;
         }
 
@@ -1583,6 +1687,70 @@ class Program
                 : $"{uptime.Minutes}m {uptime.Seconds}s";
             Console.WriteLine($"{a.Id,-14} {a.AppName,-20} {a.Platform,-14} {a.Tfm,-24} {a.Port,-6} {uptimeStr}");
         }
+    }
+
+    private static async Task WaitForAgentCommandAsync(int timeoutSeconds, string? projectFilter, string? platformFilter, bool json)
+    {
+        var brokerPort = await Broker.BrokerClient.EnsureBrokerRunningAsync();
+        if (brokerPort == null)
+        {
+            Console.Error.WriteLine("Error: Broker unavailable");
+            Environment.ExitCode = 1;
+            return;
+        }
+
+        // Resolve project filter to full path for matching
+        string? resolvedProject = null;
+        if (projectFilter != null)
+        {
+            resolvedProject = Path.GetFullPath(projectFilter);
+        }
+
+        var deadline = DateTime.UtcNow.AddSeconds(timeoutSeconds);
+        var pollInterval = TimeSpan.FromMilliseconds(500);
+        Broker.AgentRegistration? matched = null;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            var agents = await Broker.BrokerClient.ListAgentsAsync(brokerPort.Value);
+            if (agents != null && agents.Length > 0)
+            {
+                matched = FindMatchingAgent(agents, resolvedProject, platformFilter);
+                if (matched != null)
+                    break;
+            }
+
+            await Task.Delay(pollInterval);
+        }
+
+        if (matched == null)
+        {
+            Console.Error.WriteLine($"Timeout: no matching agent connected within {timeoutSeconds}s");
+            Environment.ExitCode = 1;
+            return;
+        }
+
+        if (json)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(matched));
+        }
+        else
+        {
+            Console.WriteLine(matched.Port);
+        }
+    }
+
+    private static Broker.AgentRegistration? FindMatchingAgent(Broker.AgentRegistration[] agents, string? projectFilter, string? platformFilter)
+    {
+        foreach (var agent in agents)
+        {
+            if (projectFilter != null && !string.Equals(agent.Project, projectFilter, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (platformFilter != null && !agent.Platform.Contains(platformFilter, StringComparison.OrdinalIgnoreCase))
+                continue;
+            return agent;
+        }
+        return null;
     }
 
     // ===== Batch command: interactive stdin/stdout with JSONL responses =====
