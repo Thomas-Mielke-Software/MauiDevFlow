@@ -23,18 +23,22 @@ public class AgentClient : IDisposable
     /// <summary>
     /// Check if the agent is reachable.
     /// </summary>
-    public async Task<AgentStatus?> GetStatusAsync()
+    public async Task<AgentStatus?> GetStatusAsync(int? window = null)
     {
-        var response = await GetAsync<AgentStatus>("/api/status");
+        var url = window != null ? $"/api/status?window={window}" : "/api/status";
+        var response = await GetAsync<AgentStatus>(url);
         return response;
     }
 
     /// <summary>
     /// Get the visual tree from the running app.
     /// </summary>
-    public async Task<List<ElementInfo>> GetTreeAsync(int maxDepth = 0)
+    public async Task<List<ElementInfo>> GetTreeAsync(int maxDepth = 0, int? window = null)
     {
-        var url = maxDepth > 0 ? $"/api/tree?depth={maxDepth}" : "/api/tree";
+        var parts = new List<string>();
+        if (maxDepth > 0) parts.Add($"depth={maxDepth}");
+        if (window != null) parts.Add($"window={window}");
+        var url = parts.Count > 0 ? $"/api/tree?{string.Join("&", parts)}" : "/api/tree";
         return await GetAsync<List<ElementInfo>>(url) ?? new();
     }
 
@@ -103,27 +107,32 @@ public class AgentClient : IDisposable
     /// <summary>
     /// Scroll by delta or scroll an element into view.
     /// </summary>
-    public async Task<bool> ScrollAsync(string? elementId = null, double deltaX = 0, double deltaY = 0, bool animated = true)
+    public async Task<bool> ScrollAsync(string? elementId = null, double deltaX = 0, double deltaY = 0, bool animated = true, int? window = null)
     {
-        return await PostActionAsync("/api/action/scroll", new { elementId, deltaX, deltaY, animated });
+        var url = "/api/action/scroll";
+        if (window != null) url += $"?window={window}";
+        return await PostActionAsync(url, new { elementId, deltaX, deltaY, animated });
     }
 
     /// <summary>
     /// Resize the app window.
     /// </summary>
-    public async Task<bool> ResizeAsync(int width, int height)
+    public async Task<bool> ResizeAsync(int width, int height, int? window = null)
     {
-        return await PostActionAsync("/api/action/resize", new { width, height });
+        var url = "/api/action/resize";
+        if (window != null) url += $"?window={window}";
+        return await PostActionAsync(url, new { width, height });
     }
 
     /// <summary>
     /// Take a screenshot (returns PNG bytes).
     /// </summary>
-    public async Task<byte[]?> ScreenshotAsync()
+    public async Task<byte[]?> ScreenshotAsync(int? window = null)
     {
         try
         {
-            var response = await _http.GetAsync($"{_baseUrl}/api/screenshot");
+            var url = window != null ? $"{_baseUrl}/api/screenshot?window={window}" : $"{_baseUrl}/api/screenshot";
+            var response = await _http.GetAsync(url);
             if (!response.IsSuccessStatusCode) return null;
             return await response.Content.ReadAsByteArrayAsync();
         }

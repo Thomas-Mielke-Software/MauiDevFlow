@@ -44,6 +44,28 @@ public class DevFlowAgentService : IDisposable
     }
 
     /// <summary>
+    /// Parses the optional "window" query parameter as a 0-based window index.
+    /// Returns null when not specified (callers should default to first window).
+    /// </summary>
+    private static int? ParseWindowIndex(HttpRequest request)
+    {
+        if (request.QueryParams.TryGetValue("window", out var ws) && int.TryParse(ws, out var wi))
+            return wi;
+        return null;
+    }
+
+    /// <summary>
+    /// Gets the window at the given index, or the first window when index is null.
+    /// </summary>
+    private Window? GetWindow(int? index)
+    {
+        if (_app == null) return null;
+        if (index == null) return _app.Windows.FirstOrDefault() as Window;
+        if (index.Value < 0 || index.Value >= _app.Windows.Count) return null;
+        return _app.Windows[index.Value] as Window;
+    }
+
+    /// <summary>
     /// Creates the visual tree walker. Override in platform-specific subclasses
     /// to return a walker with native info population.
     /// </summary>
@@ -136,9 +158,10 @@ public class DevFlowAgentService : IDisposable
 
     private async Task<HttpResponse> HandleStatus(HttpRequest request)
     {
+        var windowIndex = ParseWindowIndex(request);
         var result = await DispatchAsync(() =>
         {
-            var window = _app?.Windows.FirstOrDefault();
+            var window = GetWindow(windowIndex);
             var w = window?.Width ?? 0;
             var h = window?.Height ?? 0;
 
@@ -160,6 +183,7 @@ public class DevFlowAgentService : IDisposable
                 appName = _app?.GetType().Assembly.GetName().Name ?? "unknown",
                 running = _app != null,
                 cdpReady = CdpReadyCheck?.Invoke() ?? false,
+                windowCount = _app?.Windows.Count ?? 0,
                 windowWidth = double.IsFinite(w) ? w : 0,
                 windowHeight = double.IsFinite(h) ? h : 0
             };
@@ -176,7 +200,8 @@ public class DevFlowAgentService : IDisposable
         if (request.QueryParams.TryGetValue("depth", out var depthStr))
             int.TryParse(depthStr, out maxDepth);
 
-        var tree = await DispatchAsync(() => _treeWalker.WalkTree(_app, maxDepth));
+        var windowIndex = ParseWindowIndex(request);
+        var tree = await DispatchAsync(() => _treeWalker.WalkTree(_app, maxDepth, windowIndex));
         return HttpResponse.Json(tree);
     }
 
@@ -234,9 +259,10 @@ public class DevFlowAgentService : IDisposable
 
         try
         {
+            var windowIndex = ParseWindowIndex(request);
             var pngData = await DispatchAsync(async () =>
             {
-                var window = _app.Windows.FirstOrDefault();
+                var window = GetWindow(windowIndex);
                 if (window?.Page is not VisualElement rootElement) return null;
 
                 return await CaptureScreenshotAsync(rootElement);
@@ -650,9 +676,10 @@ public class DevFlowAgentService : IDisposable
         if (body == null || body.Width <= 0 || body.Height <= 0)
             return HttpResponse.Error("width and height are required (positive integers)");
 
+        var windowIndex = ParseWindowIndex(request);
         var result = await DispatchAsync(() =>
         {
-            var window = _app.Windows.FirstOrDefault();
+            var window = GetWindow(windowIndex);
             if (window?.Handler?.PlatformView == null)
                 return "No window available";
 
@@ -730,7 +757,7 @@ public class DevFlowAgentService : IDisposable
             }
 
             // Otherwise scroll by delta on the first ScrollView we find
-            var window = _app.Windows.FirstOrDefault();
+            var window = GetWindow(ParseWindowIndex(request));
             if (window?.Page == null) return "No page available";
 
             var targetScroll = FindDescendant<ScrollView>(window.Page);

@@ -65,12 +65,27 @@ public class VisualTreeWalker
 
     /// <summary>
     /// Walks the visual tree starting from the application's windows.
+    /// When windowIndex is null, walks all windows. Otherwise walks only the specified window.
     /// </summary>
-    public List<ElementInfo> WalkTree(Application app, int maxDepth = 0)
+    public List<ElementInfo> WalkTree(Application app, int maxDepth = 0, int? windowIndex = null)
     {
         var results = new List<ElementInfo>();
         if (app is not IVisualTreeElement appElement)
             return results;
+
+        if (windowIndex != null)
+        {
+            if (windowIndex.Value < 0 || windowIndex.Value >= app.Windows.Count)
+                return results;
+            var window = app.Windows[windowIndex.Value];
+            if (window is IVisualTreeElement windowElement)
+            {
+                var info = WalkElement(windowElement, null, 1, maxDepth);
+                if (info != null)
+                    results.Add(info);
+            }
+            return results;
+        }
 
         foreach (var child in appElement.GetVisualChildren())
         {

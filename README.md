@@ -137,8 +137,11 @@ maui-devflow list
 # Check agent connection
 maui-devflow MAUI status
 
-# Dump visual tree
+# Dump visual tree (all windows)
 maui-devflow MAUI tree
+
+# Dump visual tree for a specific window (0-based index)
+maui-devflow MAUI tree --window 1
 
 # Take screenshot
 maui-devflow MAUI screenshot --output screen.png
@@ -215,15 +218,17 @@ auto-assigned by the broker (range 10223–10899), or configurable via `.mauidev
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/status` | GET | Agent version, platform, app info |
-| `/api/tree?depth=N` | GET | Visual tree as JSON |
+| `/api/status` | GET | Agent version, platform, app info, window count |
+| `/api/tree?depth=N&window=W` | GET | Visual tree as JSON (window: 0-based index) |
 | `/api/element/{id}` | GET | Single element by ID |
 | `/api/query?type=&text=&automationId=` | GET | Find matching elements |
 | `/api/action/tap` | POST | Tap element `{"elementId":"..."}` |
 | `/api/action/fill` | POST | Fill text `{"elementId":"...","text":"..."}` |
 | `/api/action/clear` | POST | Clear text `{"elementId":"..."}` |
 | `/api/action/focus` | POST | Focus element `{"elementId":"..."}` |
-| `/api/screenshot` | GET | PNG screenshot |
+| `/api/action/scroll` | POST | Scroll by delta or scroll element into view `{"elementId":"...","deltaX":0,"deltaY":200}` |
+| `/api/action/resize?window=W` | POST | Resize window `{"width":800,"height":600}` |
+| `/api/screenshot?window=W` | GET | PNG screenshot (window: 0-based index) |
 | `/api/property/{id}/{name}` | GET | Get property value |
 | `/api/property/{id}/{name}` | POST | Set property `{"value":"..."}` |
 | `/api/logs?limit=N&skip=N&source=S` | GET | Application logs (source: `native`, `webview`, or omit for all) |

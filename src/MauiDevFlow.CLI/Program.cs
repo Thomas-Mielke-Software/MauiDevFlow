@@ -139,15 +139,18 @@ class Program
 
         var mauiCommand = new Command("MAUI", "Native MAUI app automation commands");
 
+        // Shared window option for commands that target a specific window
+        var windowOption = new Option<int?>("--window", "Window index (0-based, default: first window)");
+
         // MAUI status
-        var mauiStatusCmd = new Command("status", "Check agent connection");
-        mauiStatusCmd.SetHandler(async (host, port) => await MauiStatusAsync(host, port), agentHostOption, agentPortOption);
+        var mauiStatusCmd = new Command("status", "Check agent connection") { windowOption };
+        mauiStatusCmd.SetHandler(async (host, port, window) => await MauiStatusAsync(host, port, window), agentHostOption, agentPortOption, windowOption);
         mauiCommand.Add(mauiStatusCmd);
 
         // MAUI tree
         var treeDepthOption = new Option<int>("--depth", () => 0, "Max tree depth (0=unlimited)");
-        var mauiTreeCmd = new Command("tree", "Dump visual tree") { treeDepthOption };
-        mauiTreeCmd.SetHandler(async (host, port, depth) => await MauiTreeAsync(host, port, depth), agentHostOption, agentPortOption, treeDepthOption);
+        var mauiTreeCmd = new Command("tree", "Dump visual tree") { treeDepthOption, windowOption };
+        mauiTreeCmd.SetHandler(async (host, port, depth, window) => await MauiTreeAsync(host, port, depth, window), agentHostOption, agentPortOption, treeDepthOption, windowOption);
         mauiCommand.Add(mauiTreeCmd);
 
         // MAUI query
@@ -181,8 +184,8 @@ class Program
 
         // MAUI screenshot
         var screenshotOutputOption = new Option<string?>("--output", "Output file path");
-        var mauiScreenshotCmd = new Command("screenshot", "Take screenshot") { screenshotOutputOption };
-        mauiScreenshotCmd.SetHandler(async (host, port, output) => await MauiScreenshotAsync(host, port, output), agentHostOption, agentPortOption, screenshotOutputOption);
+        var mauiScreenshotCmd = new Command("screenshot", "Take screenshot") { screenshotOutputOption, windowOption };
+        mauiScreenshotCmd.SetHandler(async (host, port, output, window) => await MauiScreenshotAsync(host, port, output, window), agentHostOption, agentPortOption, screenshotOutputOption, windowOption);
         mauiCommand.Add(mauiScreenshotCmd);
 
         // MAUI recording subcommands
@@ -240,10 +243,10 @@ class Program
         var scrollDeltaXOption = new Option<double>("--dx", () => 0, "Horizontal scroll delta");
         var scrollDeltaYOption = new Option<double>("--dy", () => 0, "Vertical scroll delta");
         var scrollAnimatedOption = new Option<bool>("--animated", () => true, "Animate the scroll");
-        var mauiScrollCmd = new Command("scroll", "Scroll content by delta or scroll element into view") { scrollElementIdOption, scrollDeltaXOption, scrollDeltaYOption, scrollAnimatedOption };
-        mauiScrollCmd.SetHandler(async (host, port, elementId, dx, dy, animated) =>
-            await MauiScrollAsync(host, port, elementId, dx, dy, animated),
-            agentHostOption, agentPortOption, scrollElementIdOption, scrollDeltaXOption, scrollDeltaYOption, scrollAnimatedOption);
+        var mauiScrollCmd = new Command("scroll", "Scroll content by delta or scroll element into view") { scrollElementIdOption, scrollDeltaXOption, scrollDeltaYOption, scrollAnimatedOption, windowOption };
+        mauiScrollCmd.SetHandler(async (host, port, elementId, dx, dy, animated, window) =>
+            await MauiScrollAsync(host, port, elementId, dx, dy, animated, window),
+            agentHostOption, agentPortOption, scrollElementIdOption, scrollDeltaXOption, scrollDeltaYOption, scrollAnimatedOption, windowOption);
         mauiCommand.Add(mauiScrollCmd);
 
         // MAUI focus
@@ -255,8 +258,8 @@ class Program
         // MAUI resize
         var resizeWidthArg = new Argument<int>("width", "Window width");
         var resizeHeightArg = new Argument<int>("height", "Window height");
-        var mauiResizeCmd = new Command("resize", "Resize app window") { resizeWidthArg, resizeHeightArg };
-        mauiResizeCmd.SetHandler(async (host, port, w, h) => await MauiResizeAsync(host, port, w, h), agentHostOption, agentPortOption, resizeWidthArg, resizeHeightArg);
+        var mauiResizeCmd = new Command("resize", "Resize app window") { resizeWidthArg, resizeHeightArg, windowOption };
+        mauiResizeCmd.SetHandler(async (host, port, w, h, window) => await MauiResizeAsync(host, port, w, h, window), agentHostOption, agentPortOption, resizeWidthArg, resizeHeightArg, windowOption);
         mauiCommand.Add(mauiResizeCmd);
 
         // MAUI alert subcommands — supports iOS simulator (apple CLI) and Mac Catalyst (macOS AX API)
@@ -983,12 +986,12 @@ class Program
 
     // ===== MAUI Agent Commands =====
 
-    private static async Task MauiStatusAsync(string host, int port)
+    private static async Task MauiStatusAsync(string host, int port, int? window)
     {
         try
         {
             using var client = new MauiDevFlow.Driver.AgentClient(host, port);
-            var status = await client.GetStatusAsync();
+            var status = await client.GetStatusAsync(window);
             if (status == null)
             {
                 WriteError($"Cannot connect to agent at {host}:{port}");
@@ -1002,12 +1005,12 @@ class Program
         catch (Exception ex) { WriteError(ex.Message); }
     }
 
-    private static async Task MauiTreeAsync(string host, int port, int depth)
+    private static async Task MauiTreeAsync(string host, int port, int depth, int? window)
     {
         try
         {
             using var client = new MauiDevFlow.Driver.AgentClient(host, port);
-            var tree = await client.GetTreeAsync(depth);
+            var tree = await client.GetTreeAsync(depth, window);
             PrintTree(tree, 0);
         }
         catch (Exception ex) { WriteError(ex.Message); }
@@ -1070,12 +1073,12 @@ class Program
         catch (Exception ex) { WriteError(ex.Message); }
     }
 
-    private static async Task MauiScreenshotAsync(string host, int port, string? output)
+    private static async Task MauiScreenshotAsync(string host, int port, string? output, int? window)
     {
         try
         {
             using var client = new MauiDevFlow.Driver.AgentClient(host, port);
-            var data = await client.ScreenshotAsync();
+            var data = await client.ScreenshotAsync(window);
             if (data == null)
             {
                 WriteError("Failed to capture screenshot");
@@ -1187,12 +1190,12 @@ class Program
         catch (Exception ex) { WriteError(ex.Message); }
     }
 
-    private static async Task MauiScrollAsync(string host, int port, string? elementId, double dx, double dy, bool animated)
+    private static async Task MauiScrollAsync(string host, int port, string? elementId, double dx, double dy, bool animated, int? window)
     {
         try
         {
             using var client = new MauiDevFlow.Driver.AgentClient(host, port);
-            var success = await client.ScrollAsync(elementId, dx, dy, animated);
+            var success = await client.ScrollAsync(elementId, dx, dy, animated, window);
             if (elementId != null)
                 Console.WriteLine(success ? $"Scrolled to element: {elementId}" : $"Failed to scroll to element: {elementId}");
             else
@@ -1212,12 +1215,12 @@ class Program
         catch (Exception ex) { WriteError(ex.Message); }
     }
 
-    private static async Task MauiResizeAsync(string host, int port, int width, int height)
+    private static async Task MauiResizeAsync(string host, int port, int width, int height, int? window)
     {
         try
         {
             using var client = new MauiDevFlow.Driver.AgentClient(host, port);
-            var success = await client.ResizeAsync(width, height);
+            var success = await client.ResizeAsync(width, height, window);
             Console.WriteLine(success ? $"Resized to: {width}x{height}" : $"Failed to resize");
         }
         catch (Exception ex) { WriteError(ex.Message); }

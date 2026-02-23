@@ -154,10 +154,11 @@ if the build fails.
 
 **Typical inspection flow:**
 1. `maui-devflow MAUI tree` — see the full visual tree with element IDs, types, text, bounds
-2. `maui-devflow MAUI query --automationId "MyButton"` — find specific elements
-3. `maui-devflow MAUI element <id>` — get full details (type, bounds, visibility, children)
-4. `maui-devflow MAUI property <id> Text` — read any property by name
-5. `maui-devflow MAUI screenshot --output screen.png` — visual verification
+2. `maui-devflow MAUI tree --window 1` — filter to a specific window (0-based index)
+3. `maui-devflow MAUI query --automationId "MyButton"` — find specific elements
+4. `maui-devflow MAUI element <id>` — get full details (type, bounds, visibility, children)
+5. `maui-devflow MAUI property <id> Text` — read any property by name
+6. `maui-devflow MAUI screenshot --output screen.png` — visual verification
 
 **Property inspection** is more reliable than screenshots for verifying exact runtime values:
 ```bash
@@ -244,17 +245,20 @@ or `maui-devflow --agent-port 10224 MAUI status` — both are valid.
 
 | Command | Description |
 |---------|-------------|
-| `MAUI status` | Agent connection status, platform, app name |
-| `MAUI tree [--depth N]` | Visual tree (IDs, types, text, bounds). Depth 0=unlimited |
+| `MAUI status [--window W]` | Agent connection status, platform, app name, window count |
+| `MAUI tree [--depth N] [--window W]` | Visual tree (IDs, types, text, bounds). Depth 0=unlimited. Window is 0-based index; omit for all windows |
 | `MAUI query --type T --automationId A --text T` | Find elements (any/all filters) |
 | `MAUI tap <elementId>` | Tap an element |
 | `MAUI fill <elementId> <text>` | Fill text into Entry/Editor |
 | `MAUI clear <elementId>` | Clear text from element |
-| `MAUI screenshot [--output path.png]` | PNG screenshot |
+| `MAUI screenshot [--output path.png] [--window W]` | PNG screenshot. Window is 0-based index; default first window |
 | `MAUI property <elementId> <prop>` | Read property (Text, IsVisible, FontSize, etc.) |
 | `MAUI set-property <elementId> <prop> <value>` | Set property (live editing — colors, text, sizes, etc.) |
 | `MAUI element <elementId>` | Full element JSON (type, bounds, children, etc.) |
 | `MAUI navigate <route>` | Shell navigation (e.g. `//native`, `//blazor`) |
+| `MAUI scroll [--element id] [--dx N] [--dy N] [--window W]` | Scroll by delta or scroll element into view |
+| `MAUI focus <elementId>` | Set focus to element |
+| `MAUI resize <width> <height> [--window W]` | Resize app window. Window is 0-based index; default first window |
 | `MAUI logs [--limit N] [--skip N] [--source S]` | Fetch application logs (newest first). Source: native, webview, or omit for all |
 | `MAUI recording start [--output path] [--timeout 30]` | Start screen recording. Default timeout 30s. Uses platform-native tools (adb screenrecord, xcrun simctl, screencapture, ffmpeg) |
 | `MAUI recording stop` | Stop active recording and save the video file |
