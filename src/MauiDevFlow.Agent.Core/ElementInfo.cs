@@ -48,6 +48,10 @@ public class ElementInfo
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<string>? Gestures { get; set; }
 
+    [JsonPropertyName("styleClass")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? StyleClass { get; set; }
+
     [JsonPropertyName("nativeType")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? NativeType { get; set; }

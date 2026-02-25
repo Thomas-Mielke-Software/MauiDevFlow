@@ -225,15 +225,29 @@ public class DevFlowAgentService : IDisposable
     {
         if (_app == null) return HttpResponse.Error("Agent not bound to app");
 
+        // CSS selector takes precedence over simple filters
+        if (request.QueryParams.TryGetValue("selector", out var selector) && !string.IsNullOrWhiteSpace(selector))
+        {
+            try
+            {
+                var results = await DispatchAsync(() => _treeWalker.QueryCss(_app, selector));
+                return HttpResponse.Json(results);
+            }
+            catch (FormatException ex)
+            {
+                return HttpResponse.Error($"Invalid CSS selector: {ex.Message}");
+            }
+        }
+
         request.QueryParams.TryGetValue("type", out var type);
         request.QueryParams.TryGetValue("automationId", out var automationId);
         request.QueryParams.TryGetValue("text", out var text);
 
         if (type == null && automationId == null && text == null)
-            return HttpResponse.Error("At least one query parameter required: type, automationId, or text");
+            return HttpResponse.Error("At least one query parameter required: type, automationId, text, or selector");
 
-        var results = await DispatchAsync(() => _treeWalker.Query(_app, type, automationId, text));
-        return HttpResponse.Json(results);
+        var simpleResults = await DispatchAsync(() => _treeWalker.Query(_app, type, automationId, text));
+        return HttpResponse.Json(simpleResults);
     }
 
     protected virtual async Task<HttpResponse> HandleScreenshot(HttpRequest request)

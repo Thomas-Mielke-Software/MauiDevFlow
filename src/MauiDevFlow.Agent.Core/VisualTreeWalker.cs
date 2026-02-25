@@ -1,5 +1,6 @@
 using Microsoft.Maui;
 using Microsoft.Maui.Controls;
+using MauiDevFlow.Agent.Core.Css;
 using System.Collections.Concurrent;
 
 namespace MauiDevFlow.Agent.Core;
@@ -380,6 +381,10 @@ public class VisualTreeWalker
                 Height = double.IsFinite(ve.Frame.Height) ? ve.Frame.Height : 0
             };
 
+            // Populate style classes
+            if (ve is NavigableElement ne && ne.StyleClass is { Count: > 0 } sc)
+                info.StyleClass = sc.ToList();
+
             // Populate native view info from handler
             PopulateNativeInfo(info, ve);
         }
@@ -452,6 +457,16 @@ public class VisualTreeWalker
         {
             // Native info is best-effort; don't fail the tree walk
         }
+    }
+
+    /// <summary>
+    /// Queries elements matching a CSS selector string.
+    /// Walks the full tree, then runs the CSS selector engine against it.
+    /// </summary>
+    public List<ElementInfo> QueryCss(Application app, string selector)
+    {
+        var tree = WalkTree(app);
+        return CssSelectorEngine.Query(tree, selector);
     }
 
     /// <summary>
