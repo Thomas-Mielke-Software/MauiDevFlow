@@ -157,10 +157,11 @@ class Program
         var queryTypeOption = new Option<string?>("--type", "Filter by element type");
         var queryAutoIdOption = new Option<string?>("--automationId", "Filter by AutomationId");
         var queryTextOption = new Option<string?>("--text", "Filter by text content");
-        var mauiQueryCmd = new Command("query", "Find elements") { queryTypeOption, queryAutoIdOption, queryTextOption };
-        mauiQueryCmd.SetHandler(async (host, port, type, autoId, text) =>
-            await MauiQueryAsync(host, port, type, autoId, text),
-            agentHostOption, agentPortOption, queryTypeOption, queryAutoIdOption, queryTextOption);
+        var querySelectorOption = new Option<string?>("--selector", "CSS selector (e.g. 'Button:visible', 'StackLayout > Label[Text^=\"Hello\"]')");
+        var mauiQueryCmd = new Command("query", "Find elements") { queryTypeOption, queryAutoIdOption, queryTextOption, querySelectorOption };
+        mauiQueryCmd.SetHandler(async (host, port, type, autoId, text, selector) =>
+            await MauiQueryAsync(host, port, type, autoId, text, selector),
+            agentHostOption, agentPortOption, queryTypeOption, queryAutoIdOption, queryTextOption, querySelectorOption);
         mauiCommand.Add(mauiQueryCmd);
 
         // MAUI tap
@@ -1016,12 +1017,18 @@ class Program
         catch (Exception ex) { WriteError(ex.Message); }
     }
 
-    private static async Task MauiQueryAsync(string host, int port, string? type, string? autoId, string? text)
+    private static async Task MauiQueryAsync(string host, int port, string? type, string? autoId, string? text, string? selector)
     {
         try
         {
             using var client = new MauiDevFlow.Driver.AgentClient(host, port);
-            var results = await client.QueryAsync(type, autoId, text);
+            List<MauiDevFlow.Driver.ElementInfo> results;
+
+            if (!string.IsNullOrWhiteSpace(selector))
+                results = await client.QueryCssAsync(selector);
+            else
+                results = await client.QueryAsync(type, autoId, text);
+
             if (results.Count == 0)
             {
                 Console.WriteLine("No elements found");

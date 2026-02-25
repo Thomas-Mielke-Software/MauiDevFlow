@@ -65,6 +65,24 @@ public class AgentClient : IDisposable
     }
 
     /// <summary>
+    /// Query elements using a CSS selector string.
+    /// </summary>
+    public async Task<List<ElementInfo>> QueryCssAsync(string selector)
+    {
+        var url = $"{_baseUrl}/api/query?selector={Uri.EscapeDataString(selector)}";
+        var response = await _http.GetAsync(url);
+        var body = await response.Content.ReadAsStringAsync();
+        var json = JsonSerializer.Deserialize<JsonElement>(body);
+        if (json.ValueKind == JsonValueKind.Object &&
+            json.TryGetProperty("success", out var s) && !s.GetBoolean())
+        {
+            var msg = json.TryGetProperty("error", out var e) ? e.GetString() : "Query failed";
+            throw new InvalidOperationException(msg);
+        }
+        return json.Deserialize<List<ElementInfo>>() ?? new();
+    }
+
+    /// <summary>
     /// Tap an element.
     /// </summary>
     public async Task<bool> TapAsync(string elementId)
