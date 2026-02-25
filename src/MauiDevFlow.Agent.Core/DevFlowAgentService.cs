@@ -307,16 +307,86 @@ public class DevFlowAgentService : IDisposable
 
         var value = await DispatchAsync(() =>
         {
-            var el = _treeWalker.GetElementById(id, _app);            if (el == null) return (object?)null;
+            var el = _treeWalker.GetElementById(id, _app);
+            if (el == null) return (object?)null;
 
-            var type = el.GetType();
-            var prop = type.GetProperty(propName, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.IgnoreCase);
-            return prop?.GetValue(el)?.ToString();
+            // Support dot-path notation (e.g., "Shadow.Radius")
+            var parts = propName.Split('.');
+            object? current = el;
+            PropertyInfo? prop = null;
+            foreach (var part in parts)
+            {
+                if (current == null) return null;
+                var type = current.GetType();
+                prop = type.GetProperty(part, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+                if (prop == null) return null;
+                current = prop.GetValue(current);
+            }
+            return FormatPropertyValue(current);
         });
 
         return value != null
             ? HttpResponse.Json(new { id, property = propName, value })
             : HttpResponse.NotFound($"Property '{propName}' not found on element '{id}'");
+    }
+
+    private static string? FormatPropertyValue(object? value)
+    {
+        if (value == null) return null;
+        if (value is string s) return s;
+
+        // Try TypeConverter first — handles Thickness, CornerRadius, Color, enums, etc.
+        var converter = System.ComponentModel.TypeDescriptor.GetConverter(value.GetType());
+        if (converter.CanConvertTo(typeof(string))
+            && converter.GetType() != typeof(System.ComponentModel.TypeConverter)
+            && converter is not System.ComponentModel.CollectionConverter)
+        {
+            try
+            {
+                var result = converter.ConvertToString(value);
+                if (result != null) return result;
+            }
+            catch { }
+        }
+
+        // Fallback for complex types that lack TypeConverter ConvertTo support
+        return value switch
+        {
+            Shadow shadow => FormatShadow(shadow),
+            SolidColorBrush scb => $"SolidColorBrush Color={scb.Color?.ToArgbHex() ?? "(null)"}",
+            LinearGradientBrush lgb => $"LinearGradientBrush StartPoint={lgb.StartPoint}, EndPoint={lgb.EndPoint}, Stops={lgb.GradientStops?.Count ?? 0}",
+            RadialGradientBrush rgb => $"RadialGradientBrush Center={rgb.Center}, Radius={rgb.Radius}, Stops={rgb.GradientStops?.Count ?? 0}",
+            Brush brush => brush.GetType().Name,
+            Microsoft.Maui.Controls.Shapes.RoundRectangle rr => $"RoundRectangle CornerRadius={FormatPropertyValue(rr.CornerRadius)}",
+            Microsoft.Maui.Controls.Shapes.Shape shape => shape.GetType().Name,
+            ColumnDefinitionCollection cols => string.Join(", ", cols.Select(c => FormatGridLength(c.Width))),
+            RowDefinitionCollection rows => string.Join(", ", rows.Select(r => FormatGridLength(r.Height))),
+            FileImageSource fis => $"File: {fis.File}",
+            UriImageSource uis => $"Uri: {uis.Uri}",
+            FontImageSource fontIs => $"Font: {fontIs.Glyph} ({fontIs.FontFamily})",
+            ImageSource img => img.GetType().Name,
+            System.Collections.ICollection col => $"{col.GetType().Name} ({col.Count} items)",
+            IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
+            _ => value.ToString() ?? value.GetType().Name,
+        };
+    }
+
+    private static string FormatGridLength(GridLength gl) => gl.IsStar
+        ? (gl.Value == 1 ? "*" : $"{gl.Value}*")
+        : gl.IsAbsolute ? gl.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        : "Auto";
+
+    private static string FormatShadow(Shadow shadow)
+    {
+        var parts = new List<string>();
+        if (shadow.Brush is SolidColorBrush scb)
+            parts.Add($"Brush={scb.Color?.ToArgbHex()}");
+        else if (shadow.Brush != null)
+            parts.Add($"Brush={shadow.Brush.GetType().Name}");
+        parts.Add($"Offset=({shadow.Offset.X},{shadow.Offset.Y})");
+        parts.Add($"Radius={shadow.Radius}");
+        parts.Add($"Opacity={shadow.Opacity}");
+        return string.Join(", ", parts);
     }
 
     private async Task<HttpResponse> HandleSetProperty(HttpRequest request)
