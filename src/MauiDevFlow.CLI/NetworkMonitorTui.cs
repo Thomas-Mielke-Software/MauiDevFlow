@@ -51,7 +51,6 @@ public static class NetworkMonitorTui
     public static async Task RunAsync(string host, int port, string? filterHost, string? filterMethod)
     {
         var wsUrl = $"ws://{host}:{port}/ws/network";
-        var exit = new State<bool>(false);
         var status = new State<string>("Connecting...");
         var detailText = new State<string>("");
         var showDetail = new State<bool>(false);
@@ -180,12 +179,14 @@ public static class NetworkMonitorTui
             .Content(mainContent)
             .Bottom(footer);
 
+        TerminalApp? app = null;
+
         // Handle Enter key on grid to show details
         grid.KeyDown((_, e) =>
         {
-            if (e.Key == TerminalKey.Enter)
+            if (e.Key == TerminalKey.Enter && app != null)
             {
-                _ = LoadDetailAsync(host, port, rows, grid, selectedId, detailText, showDetail, status);
+                _ = LoadDetailAsync(host, port, rows, grid, selectedId, detailText, showDetail, status, app);
                 e.Handled = true;
             }
         });
@@ -201,20 +202,19 @@ public static class NetworkMonitorTui
             }
         });
 
-        // Start WebSocket connection in background
-        var cts = new CancellationTokenSource();
-        var wsTask = Task.Run(() => WebSocketLoop(wsUrl, doc, rows, filterHost, filterMethod, requestCount, status, exit, cts.Token));
-
         using var session = Terminal.Open();
-
-        Terminal.Run(root, ctx =>
+        app = new TerminalApp(root, session.Instance);
+        await using (app)
         {
-            if (exit.Value) return TerminalLoopResult.StopAndKeepVisual;
-            return TerminalLoopResult.Continue;
-        }, new TerminalRunOptions { UpdateWaitDuration = TimeSpan.FromMilliseconds(16) });
+            // Start WebSocket connection in background (after TerminalApp so dispatcher is active)
+            var cts = new CancellationTokenSource();
+            var wsTask = Task.Run(() => WebSocketLoop(wsUrl, doc, rows, filterHost, filterMethod, requestCount, status, app, cts.Token));
 
-        cts.Cancel();
-        try { await wsTask; } catch { }
+            app.Run(cts.Token);
+
+            cts.Cancel();
+            try { await wsTask; } catch { }
+        }
     }
 
     private static async Task LoadDetailAsync(
@@ -224,7 +224,8 @@ public static class NetworkMonitorTui
         State<string?> selectedId,
         State<string> detailText,
         State<bool> showDetail,
-        State<string> status)
+        State<string> status,
+        TerminalApp app)
     {
         var currentRow = grid.CurrentCell.Row;
         if (currentRow < 0 || currentRow >= rows.Count) return;
@@ -240,8 +241,11 @@ public static class NetworkMonitorTui
             var detail = await client.GetNetworkRequestDetailAsync(id);
             if (detail == null)
             {
-                detailText.Value = "Request not found.";
-                showDetail.Value = true;
+                app.Post(() =>
+                {
+                    detailText.Value = "Request not found.";
+                    showDetail.Value = true;
+                });
                 return;
             }
 
@@ -263,7 +267,6 @@ public static class NetworkMonitorTui
             sb.AppendLine($"Duration:    {detail.DurationMs}ms");
             sb.AppendLine();
 
-            // Request headers
             if (detail.RequestHeaders is { Count: > 0 })
             {
                 sb.AppendLine("── Request Headers ──");
@@ -272,7 +275,6 @@ public static class NetworkMonitorTui
                 sb.AppendLine();
             }
 
-            // Request body
             if (!string.IsNullOrEmpty(detail.RequestBody))
             {
                 sb.AppendLine($"── Request Body ({detail.RequestSize} bytes){(detail.RequestBodyTruncated ? " [truncated]" : "")} ──");
@@ -280,7 +282,6 @@ public static class NetworkMonitorTui
                 sb.AppendLine();
             }
 
-            // Response headers
             if (detail.ResponseHeaders is { Count: > 0 })
             {
                 sb.AppendLine("── Response Headers ──");
@@ -289,21 +290,29 @@ public static class NetworkMonitorTui
                 sb.AppendLine();
             }
 
-            // Response body
             if (!string.IsNullOrEmpty(detail.ResponseBody))
             {
                 sb.AppendLine($"── Response Body ({detail.ResponseSize} bytes){(detail.ResponseBodyTruncated ? " [truncated]" : "")} ──");
                 sb.AppendLine(TryFormatJson(detail.ResponseBody));
             }
 
-            detailText.Value = sb.ToString();
-            showDetail.Value = true;
-            status.Value = $"Viewing: {detail.Method} {detail.Url}";
+            var text = sb.ToString();
+            var statusMsg = $"Viewing: {detail.Method} {detail.Url}";
+            app.Post(() =>
+            {
+                detailText.Value = text;
+                showDetail.Value = true;
+                status.Value = statusMsg;
+            });
         }
         catch (Exception ex)
         {
-            detailText.Value = $"Error loading details: {ex.Message}";
-            showDetail.Value = true;
+            var errorMsg = ex.Message;
+            app.Post(() =>
+            {
+                detailText.Value = $"Error loading details: {errorMsg}";
+                showDetail.Value = true;
+            });
         }
     }
 
@@ -325,18 +334,18 @@ public static class NetworkMonitorTui
         string? filterMethod,
         State<int> requestCount,
         State<string> status,
-        State<bool> exit,
+        TerminalApp app,
         CancellationToken ct)
     {
         int counter = 0;
 
-        while (!ct.IsCancellationRequested && !exit.Value)
+        while (!ct.IsCancellationRequested)
         {
             try
             {
                 using var ws = new ClientWebSocket();
                 await ws.ConnectAsync(new Uri(wsUrl), ct);
-                status.Value = "Listening...";
+                app.Post(() => status.Value = "Listening...");
 
                 var buffer = new byte[65536];
                 var sb = new StringBuilder();
@@ -357,7 +366,6 @@ public static class NetworkMonitorTui
 
                     var msg = sb.ToString();
                     if (string.IsNullOrEmpty(msg)) continue;
-
                     try
                     {
                         using var jsonDoc = JsonDocument.Parse(msg);
@@ -365,27 +373,37 @@ public static class NetworkMonitorTui
 
                         if (type == "replay" && jsonDoc.RootElement.TryGetProperty("entries", out var entries))
                         {
+                            var newRows = new List<NetworkRow>();
                             foreach (var entry in entries.EnumerateArray())
                             {
                                 if (!MatchesFilter(entry, filterHost, filterMethod)) continue;
                                 counter++;
-                                var row = CreateRow(counter, entry);
-                                doc.AddRow(row);
-                                rows.Add(row);
-                                requestCount.Value = counter;
+                                newRows.Add(CreateRow(counter, entry));
                             }
+                            var c = counter;
+                            app.Post(() =>
+                            {
+                                foreach (var r in newRows)
+                                {
+                                    doc.AddRow(r);
+                                    rows.Add(r);
+                                }
+                                requestCount.Value = c;
+                            });
                         }
                         else if (type == "request" && jsonDoc.RootElement.TryGetProperty("entry", out var reqEntry))
                         {
                             if (!MatchesFilter(reqEntry, filterHost, filterMethod)) continue;
                             counter++;
                             var row = CreateRow(counter, reqEntry);
-                            doc.InsertRow(0, row);
-                            rows.Insert(0, row);
-                            // Re-number rows
-                            for (int i = 0; i < rows.Count; i++)
-                                rows[i].Index = rows.Count - i;
-                            requestCount.Value = counter;
+                            app.Post(() =>
+                            {
+                                doc.InsertRow(0, row);
+                                rows.Insert(0, row);
+                                for (int i = 0; i < rows.Count; i++)
+                                    rows[i].Index = rows.Count - i;
+                                requestCount.Value = rows.Count;
+                            });
                         }
                     }
                     catch (JsonException) { }
@@ -395,13 +413,14 @@ public static class NetworkMonitorTui
             catch (WebSocketException)
             {
                 if (ct.IsCancellationRequested) break;
-                status.Value = "Reconnecting...";
+                app.Post(() => status.Value = "Reconnecting...");
                 try { await Task.Delay(1000, ct); } catch { break; }
             }
             catch (Exception ex)
             {
                 if (ct.IsCancellationRequested) break;
-                status.Value = $"Error: {ex.Message}";
+                var errorMsg = ex.Message;
+                app.Post(() => status.Value = $"Error: {errorMsg}");
                 try { await Task.Delay(2000, ct); } catch { break; }
             }
         }
