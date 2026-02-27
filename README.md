@@ -146,6 +146,10 @@ maui-devflow MAUI tree --window 1
 # Take screenshot
 maui-devflow MAUI screenshot --output screen.png
 
+# Take screenshot of a specific element
+maui-devflow MAUI screenshot --id HeaderLabel --output header.png
+maui-devflow MAUI screenshot --selector "Button" --output button.png
+
 # Fetch application logs
 maui-devflow MAUI logs --limit 50
 
@@ -228,7 +232,7 @@ auto-assigned by the broker (range 10223–10899), or configurable via `.mauidev
 | `/api/action/focus` | POST | Focus element `{"elementId":"..."}` |
 | `/api/action/scroll` | POST | Scroll by delta or scroll element into view `{"elementId":"...","deltaX":0,"deltaY":200}` |
 | `/api/action/resize?window=W` | POST | Resize window `{"width":800,"height":600}` |
-| `/api/screenshot?window=W` | GET | PNG screenshot (window: 0-based index) |
+| `/api/screenshot?window=W&id=ID&selector=SEL` | GET | PNG screenshot. Full window, or element by ID/selector |
 | `/api/property/{id}/{name}` | GET | Get property value |
 | `/api/property/{id}/{name}` | POST | Set property `{"value":"..."}` |
 | `/api/logs?limit=N&skip=N&source=S` | GET | Application logs (source: `native`, `webview`, or omit for all) |
