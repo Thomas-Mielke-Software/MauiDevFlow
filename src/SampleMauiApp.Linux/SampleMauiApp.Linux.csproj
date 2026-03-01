@@ -9,9 +9,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Platform.Maui.Linux.Gtk4" Version="0.2.3" />
-    <PackageReference Include="Platform.Maui.Linux.Gtk4.BlazorWebView" Version="0.2.3" />
-    <PackageReference Include="Platform.Maui.Linux.Gtk4.Essentials" Version="0.2.3" />
+    <PackageReference Include="Platform.Maui.Linux.Gtk4" Version="0.5.0" />
+    <PackageReference Include="Platform.Maui.Linux.Gtk4.BlazorWebView" Version="0.5.0" />
+    <PackageReference Include="Platform.Maui.Linux.Gtk4.Essentials" Version="0.5.0" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)" />
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
   </ItemGroup>
