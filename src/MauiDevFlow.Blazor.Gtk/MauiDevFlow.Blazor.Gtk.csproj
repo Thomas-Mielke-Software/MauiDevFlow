@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Platform.Maui.Linux.Gtk4.BlazorWebView" Version="0.2.3" />
+    <PackageReference Include="Platform.Maui.Linux.Gtk4.BlazorWebView" Version="0.5.0" />
   </ItemGroup>
 
   <!-- Embed JS scripts as resources -->

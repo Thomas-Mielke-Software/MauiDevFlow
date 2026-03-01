@@ -342,7 +342,37 @@ public class DevFlowAgentService : IDisposable
             var pngData = await DispatchAsync(async () =>
             {
                 var window = GetWindow(windowIndex);
-                if (window?.Page is not VisualElement rootElement) return null;
+                if (window == null) return null;
+
+                // If a modal page is displayed, capture it instead of the underlying page
+                VisualElement? topModal = null;
+                try
+                {
+                    var modalStack = window.Page?.Navigation?.ModalStack;
+                    if (modalStack?.Count > 0 && modalStack[^1] is VisualElement ms)
+                        topModal = ms;
+                }
+                catch { }
+
+                // Fallback: check Window's visual children for modal pages
+                // (on some platforms like GTK, modals appear as direct children of the Window)
+                if (topModal == null && window is IVisualTreeElement windowVte)
+                {
+                    var children = windowVte.GetVisualChildren();
+                    for (int i = children.Count - 1; i >= 0; i--)
+                    {
+                        if (children[i] is Page page && page != window.Page)
+                        {
+                            topModal = page;
+                            break;
+                        }
+                    }
+                }
+
+                if (topModal != null)
+                    return await CaptureScreenshotAsync(topModal);
+
+                if (window.Page is not VisualElement rootElement) return null;
 
                 return await CaptureScreenshotAsync(rootElement);
             });

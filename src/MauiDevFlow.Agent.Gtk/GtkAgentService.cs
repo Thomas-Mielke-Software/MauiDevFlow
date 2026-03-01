@@ -106,7 +106,18 @@ public class GtkAgentService : DevFlowAgentService
         }
         catch { }
 
-        // GTK4-specific fallback: capture via Gtk.WidgetPaintable
+        // GTK4-specific fallback: capture the rootElement's native widget directly
+        try
+        {
+            if (rootElement.Handler?.PlatformView is global::Gtk.Widget widget)
+            {
+                var pngBytes = CaptureGtkWidget(widget);
+                if (pngBytes != null) return pngBytes;
+            }
+        }
+        catch { }
+
+        // Final fallback: capture the main GTK window
         try
         {
             var window = Application.Current?.Windows.FirstOrDefault();
