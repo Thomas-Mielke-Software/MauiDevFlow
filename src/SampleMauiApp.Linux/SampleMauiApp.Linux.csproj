@@ -9,9 +9,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Platform.Maui.Linux.Gtk4" Version="0.2.3" />
-    <PackageReference Include="Platform.Maui.Linux.Gtk4.BlazorWebView" Version="0.2.3" />
-    <PackageReference Include="Platform.Maui.Linux.Gtk4.Essentials" Version="0.2.3" />
+    <PackageReference Include="Platform.Maui.Linux.Gtk4" Version="0.5.0" />
+    <PackageReference Include="Platform.Maui.Linux.Gtk4.BlazorWebView" Version="0.5.0" />
+    <PackageReference Include="Platform.Maui.Linux.Gtk4.Essentials" Version="0.5.0" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)" />
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
   </ItemGroup>
@@ -30,6 +30,7 @@
     <Compile Include="..\SampleMauiApp\DialogTestPage.xaml.cs" Link="DialogTestPage.xaml.cs" />
     <Compile Include="..\SampleMauiApp\InteractionTestPage.xaml.cs" Link="InteractionTestPage.xaml.cs" />
     <Compile Include="..\SampleMauiApp\NetworkTestPage.xaml.cs" Link="NetworkTestPage.xaml.cs" />
+    <Compile Include="..\SampleMauiApp\ModalTestPage.xaml.cs" Link="ModalTestPage.xaml.cs" />
     <Compile Include="..\SampleMauiApp\TodoService.cs" Link="TodoService.cs" />
     <Compile Include="..\SampleMauiApp\TodoItem.cs" Link="TodoItem.cs" />
     <Compile Include="..\SampleMauiApp\DebugFileLogger.cs" Link="DebugFileLogger.cs" />
@@ -44,6 +45,7 @@
     <MauiXaml Include="..\SampleMauiApp\DialogTestPage.xaml" Link="DialogTestPage.xaml" />
     <MauiXaml Include="..\SampleMauiApp\InteractionTestPage.xaml" Link="InteractionTestPage.xaml" />
     <MauiXaml Include="..\SampleMauiApp\NetworkTestPage.xaml" Link="NetworkTestPage.xaml" />
+    <MauiXaml Include="..\SampleMauiApp\ModalTestPage.xaml" Link="ModalTestPage.xaml" />
   </ItemGroup>
 
   <!-- Resources are symlinked from SampleMauiApp -->
