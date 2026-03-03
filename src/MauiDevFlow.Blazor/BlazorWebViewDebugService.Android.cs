@@ -82,6 +82,7 @@ public class BlazorWebViewDebugService : BlazorWebViewDebugServiceBase
 
             if (handler.PlatformView is AWebView androidWebView)
             {
+                if (androidWebView == _webView) return;
                 _webView = androidWebView;
                 _webView.Settings.JavaScriptEnabled = true;
                 Log("[BlazorDevFlow] Android WebView captured successfully");

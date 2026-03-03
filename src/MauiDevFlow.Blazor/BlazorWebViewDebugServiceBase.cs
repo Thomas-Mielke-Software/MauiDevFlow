@@ -133,6 +133,16 @@ public abstract class BlazorWebViewDebugServiceBase : IDisposable
             return;
         }
 
+        // Skip if chobitsu is already initialized in this JS context
+        // (can happen when Shell navigation recreates the native WebView but shares the JS process pool)
+        var alreadyInit = await EvaluateJavaScriptAsync("window.__chobitsuDebugEnabled ? 'yes' : 'no'");
+        if (alreadyInit?.Contains("yes") == true)
+        {
+            Log("[BlazorDevFlow] Chobitsu already initialized in JS context, skipping re-injection");
+            _chobitsuLoaded = true;
+            return;
+        }
+
         // Wait for chobitsu to be available (auto-injected via JS initializer, or manual <script> tag)
         for (int i = 0; i < 30; i++)
         {

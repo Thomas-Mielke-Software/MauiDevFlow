@@ -42,6 +42,7 @@ public class BlazorWebViewDebugService : BlazorWebViewDebugServiceBase
 
             if (handler.PlatformView is WKWebView wkWebView)
             {
+                if (wkWebView == _webView) return;
                 _webView = wkWebView;
                 Log("[BlazorDevFlow] WKWebView captured successfully");
                 await OnWebViewCapturedAsync();
@@ -168,6 +169,7 @@ public class BlazorWebViewDebugService : BlazorWebViewDebugServiceBase
 
             if (handler.PlatformView is WKWebView wkWebView)
             {
+                if (wkWebView == _webView) return;
                 _webView = wkWebView;
                 Log("[BlazorDevFlow] WKWebView captured successfully");
                 await OnWebViewCapturedAsync();
