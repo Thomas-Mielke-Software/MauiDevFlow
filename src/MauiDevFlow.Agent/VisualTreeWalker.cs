@@ -1,5 +1,8 @@
 using Microsoft.Maui.Controls;
 using MauiDevFlow.Agent.Core;
+#if IOS || MACCATALYST
+using UIKit;
+#endif
 #if MACOS
 using AppKit;
 #endif
@@ -117,4 +120,338 @@ public class PlatformVisualTreeWalker : VisualTreeWalker
             // Native info is best-effort; don't fail the tree walk
         }
     }
+
+    protected override BoundsInfo? ResolveSyntheticBounds(object marker)
+    {
+        try
+        {
+#if IOS || MACCATALYST
+            return ResolveBoundsApple(marker);
+#elif ANDROID
+            return ResolveBoundsAndroid(marker);
+#elif WINDOWS
+            return ResolveBoundsWindows(marker);
+#else
+            return null;
+#endif
+        }
+        catch { return null; }
+    }
+
+    protected override void PopulateSyntheticNativeInfo(ElementInfo info, object marker)
+    {
+        try
+        {
+#if IOS || MACCATALYST
+            PopulateNativeInfoApple(info, marker);
+#elif ANDROID
+            PopulateNativeInfoAndroid(info, marker);
+#elif WINDOWS
+            PopulateNativeInfoWindows(info, marker);
+#endif
+        }
+        catch { }
+    }
+
+    protected override BoundsInfo? ResolveWindowBounds(VisualElement ve)
+    {
+        try
+        {
+            var platformView = ve.Handler?.PlatformView;
+            if (platformView == null) return null;
+
+#if IOS || MACCATALYST
+            if (platformView is UIKit.UIView uiView && uiView.Window != null)
+            {
+                var windowRect = uiView.ConvertRectToView(uiView.Bounds, uiView.Window.RootViewController?.View ?? uiView.Window);
+                return new BoundsInfo
+                {
+                    X = windowRect.X,
+                    Y = windowRect.Y,
+                    Width = windowRect.Width,
+                    Height = windowRect.Height
+                };
+            }
+#elif ANDROID
+            if (platformView is Android.Views.View androidView)
+            {
+                var location = new int[2];
+                androidView.GetLocationInWindow(location);
+                var density = androidView.Context?.Resources?.DisplayMetrics?.Density ?? 1f;
+                return new BoundsInfo
+                {
+                    X = location[0] / density,
+                    Y = location[1] / density,
+                    Width = androidView.Width / density,
+                    Height = androidView.Height / density
+                };
+            }
+#elif WINDOWS
+            if (platformView is Microsoft.UI.Xaml.UIElement uiElement)
+            {
+                var transform = uiElement.TransformToVisual(null);
+                var point = transform.TransformPoint(new Windows.Foundation.Point(0, 0));
+                if (uiElement is Microsoft.UI.Xaml.FrameworkElement fe)
+                {
+                    return new BoundsInfo
+                    {
+                        X = point.X,
+                        Y = point.Y,
+                        Width = fe.ActualWidth,
+                        Height = fe.ActualHeight
+                    };
+                }
+            }
+#elif MACOS
+            if (platformView is AppKit.NSView nsView && nsView.Window?.ContentView != null)
+            {
+                var windowRect = nsView.ConvertRectToView(nsView.Bounds, nsView.Window.ContentView);
+                // NSView uses bottom-left origin; convert to top-left
+                var contentHeight = nsView.Window.ContentView.Bounds.Height;
+                return new BoundsInfo
+                {
+                    X = windowRect.X,
+                    Y = contentHeight - windowRect.Y - windowRect.Height,
+                    Width = windowRect.Width,
+                    Height = windowRect.Height
+                };
+            }
+#endif
+            return null;
+        }
+        catch { return null; }
+    }
+
+#if IOS || MACCATALYST
+    private BoundsInfo? ResolveBoundsApple(object marker)
+    {
+        Shell? shell = marker switch
+        {
+            FlyoutButtonMarker m => m.Shell,
+            ShellFlyoutItemMarker m => m.Shell,
+            ShellTabMarker m => m.Shell,
+            NavBarTitleMarker => Shell.Current,
+            SearchHandlerMarker => Shell.Current,
+            _ => null
+        };
+
+        if (shell?.Handler?.PlatformView is not UIView shellView)
+            return null;
+
+        // Find UINavigationBar for nav bar elements
+        if (marker is NavBarTitleMarker or FlyoutButtonMarker or SearchHandlerMarker)
+        {
+            var navBar = FindSubview<UINavigationBar>(shellView);
+            if (navBar != null)
+            {
+                var frame = navBar.ConvertRectToView(navBar.Bounds, shellView);
+                if (marker is FlyoutButtonMarker)
+                {
+                    // Flyout button is in the left area of the nav bar
+                    return new BoundsInfo
+                    {
+                        X = frame.X,
+                        Y = frame.Y,
+                        Width = 44,
+                        Height = frame.Height
+                    };
+                }
+                return new BoundsInfo
+                {
+                    X = frame.X,
+                    Y = frame.Y,
+                    Width = frame.Width,
+                    Height = frame.Height
+                };
+            }
+        }
+
+        // Find UITabBar for tab elements
+        if (marker is ShellTabMarker)
+        {
+            var tabBar = FindSubview<UITabBar>(shellView);
+            if (tabBar != null)
+            {
+                var frame = tabBar.ConvertRectToView(tabBar.Bounds, shellView);
+                return new BoundsInfo
+                {
+                    X = frame.X,
+                    Y = frame.Y,
+                    Width = frame.Width,
+                    Height = frame.Height
+                };
+            }
+        }
+
+        return null;
+    }
+
+    private static T? FindSubview<T>(UIView root) where T : UIView
+    {
+        if (root is T match) return match;
+        foreach (var sub in root.Subviews)
+        {
+            var found = FindSubview<T>(sub);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private void PopulateNativeInfoApple(ElementInfo info, object marker)
+    {
+        Shell? shell = marker switch
+        {
+            FlyoutButtonMarker m => m.Shell,
+            ShellFlyoutItemMarker m => m.Shell,
+            ShellTabMarker m => m.Shell,
+            NavBarTitleMarker => Shell.Current,
+            _ => null
+        };
+
+        if (shell?.Handler?.PlatformView is UIView shellView)
+        {
+            if (marker is NavBarTitleMarker or FlyoutButtonMarker)
+            {
+                var navBar = FindSubview<UINavigationBar>(shellView);
+                if (navBar != null) info.NativeType = navBar.GetType().FullName;
+            }
+            else if (marker is ShellTabMarker)
+            {
+                var tabBar = FindSubview<UITabBar>(shellView);
+                if (tabBar != null) info.NativeType = tabBar.GetType().FullName;
+            }
+        }
+    }
+#endif
+
+#if ANDROID
+    private BoundsInfo? ResolveBoundsAndroid(object marker)
+    {
+        Shell? shell = marker switch
+        {
+            FlyoutButtonMarker m => m.Shell,
+            ShellFlyoutItemMarker m => m.Shell,
+            ShellTabMarker m => m.Shell,
+            NavBarTitleMarker => Shell.Current,
+            _ => null
+        };
+
+        if (shell?.Handler?.PlatformView is not Android.Views.View shellView)
+            return null;
+
+        var density = shellView.Context?.Resources?.DisplayMetrics?.Density ?? 1f;
+
+        if (marker is NavBarTitleMarker or FlyoutButtonMarker)
+        {
+            var toolbar = FindAndroidView<AndroidX.AppCompat.Widget.Toolbar>(shellView);
+            if (toolbar != null)
+            {
+                var location = new int[2];
+                toolbar.GetLocationOnScreen(location);
+                var shellLocation = new int[2];
+                shellView.GetLocationOnScreen(shellLocation);
+
+                return new BoundsInfo
+                {
+                    X = (location[0] - shellLocation[0]) / density,
+                    Y = (location[1] - shellLocation[1]) / density,
+                    Width = toolbar.Width / density,
+                    Height = toolbar.Height / density
+                };
+            }
+        }
+
+        if (marker is ShellTabMarker)
+        {
+            var bottomNav = FindAndroidView<Google.Android.Material.BottomNavigation.BottomNavigationView>(shellView);
+            if (bottomNav != null)
+            {
+                var location = new int[2];
+                bottomNav.GetLocationOnScreen(location);
+                var shellLocation = new int[2];
+                shellView.GetLocationOnScreen(shellLocation);
+
+                return new BoundsInfo
+                {
+                    X = (location[0] - shellLocation[0]) / density,
+                    Y = (location[1] - shellLocation[1]) / density,
+                    Width = bottomNav.Width / density,
+                    Height = bottomNav.Height / density
+                };
+            }
+        }
+
+        return null;
+    }
+
+    private static T? FindAndroidView<T>(Android.Views.View root) where T : Android.Views.View
+    {
+        if (root is T match) return match;
+        if (root is Android.Views.ViewGroup vg)
+        {
+            for (int i = 0; i < vg.ChildCount; i++)
+            {
+                var child = vg.GetChildAt(i);
+                if (child != null)
+                {
+                    var found = FindAndroidView<T>(child);
+                    if (found != null) return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    private void PopulateNativeInfoAndroid(ElementInfo info, object marker)
+    {
+        Shell? shell = marker switch
+        {
+            FlyoutButtonMarker m => m.Shell,
+            ShellFlyoutItemMarker m => m.Shell,
+            ShellTabMarker m => m.Shell,
+            NavBarTitleMarker => Shell.Current,
+            _ => null
+        };
+
+        if (shell?.Handler?.PlatformView is Android.Views.View shellView)
+        {
+            if (marker is NavBarTitleMarker or FlyoutButtonMarker)
+            {
+                var toolbar = FindAndroidView<AndroidX.AppCompat.Widget.Toolbar>(shellView);
+                if (toolbar != null) info.NativeType = toolbar.GetType().FullName ?? toolbar.Class?.Name;
+            }
+            else if (marker is ShellTabMarker)
+            {
+                var bottomNav = FindAndroidView<Google.Android.Material.BottomNavigation.BottomNavigationView>(shellView);
+                if (bottomNav != null) info.NativeType = bottomNav.GetType().FullName ?? bottomNav.Class?.Name;
+            }
+        }
+    }
+#endif
+
+#if WINDOWS
+    private BoundsInfo? ResolveBoundsWindows(object marker)
+    {
+        // Windows NavigationView doesn't expose easily queryable sub-parts
+        // for nav bar / tab regions. Return null for now — can be enhanced later.
+        return null;
+    }
+
+    private void PopulateNativeInfoWindows(ElementInfo info, object marker)
+    {
+        Shell? shell = marker switch
+        {
+            FlyoutButtonMarker m => m.Shell,
+            ShellFlyoutItemMarker m => m.Shell,
+            ShellTabMarker m => m.Shell,
+            NavBarTitleMarker => Shell.Current,
+            _ => null
+        };
+
+        if (shell?.Handler?.PlatformView is Microsoft.UI.Xaml.FrameworkElement fe)
+        {
+            info.NativeType = fe.GetType().FullName;
+        }
+    }
+#endif
 }
