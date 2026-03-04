@@ -87,6 +87,56 @@ public class VisualTreeWalker
     }
 
     /// <summary>
+    /// Performs bounds-based hit testing by walking the visual tree and checking
+    /// window bounds for each element. This supplements GetVisualTreeElements
+    /// which may not traverse into all containers on some platforms.
+    /// Returns elements whose window bounds contain the given point.
+    /// </summary>
+    public List<VisualElement> HitTestByBounds(double x, double y, Application app, int? windowIndex = null)
+    {
+        var hits = new List<VisualElement>();
+        var window = windowIndex.HasValue && windowIndex.Value < app.Windows.Count
+            ? app.Windows[windowIndex.Value]
+            : app.Windows.FirstOrDefault();
+        if (window?.Page == null) return hits;
+
+        HitTestByBoundsRecursive(window.Page, x, y, hits);
+
+        // Also check modal pages
+        var modalStack = window.Navigation?.ModalStack;
+        if (modalStack != null)
+        {
+            foreach (var modal in modalStack)
+                HitTestByBoundsRecursive(modal, x, y, hits);
+        }
+
+        return hits;
+    }
+
+    private void HitTestByBoundsRecursive(Element element, double x, double y, List<VisualElement> hits)
+    {
+        if (element is VisualElement ve && ve.IsVisible)
+        {
+            var wb = ResolveWindowBounds(ve);
+            if (wb != null && wb.Width > 0 && wb.Height > 0 &&
+                x >= wb.X && x <= wb.X + wb.Width &&
+                y >= wb.Y && y <= wb.Y + wb.Height)
+            {
+                hits.Add(ve);
+            }
+        }
+
+        if (element is IVisualTreeElement vte)
+        {
+            foreach (var child in vte.GetVisualChildren())
+            {
+                if (child is Element childEl)
+                    HitTestByBoundsRecursive(childEl, x, y, hits);
+            }
+        }
+    }
+
+    /// <summary>
     /// Gets the display type name for a synthetic marker object.
     /// </summary>
     public string GetSyntheticTypeName(object marker) => marker switch

@@ -391,7 +391,24 @@ public class DevFlowAgentService : IDisposable
             // Build active Shell context to filter out inactive ShellItem subtrees
             var activeShellItemIds = BuildActiveShellItemIds(window);
 
-            var hits = VisualTreeElementExtensions.GetVisualTreeElements(window, x, y);
+            var platformHits = VisualTreeElementExtensions.GetVisualTreeElements(window, x, y);
+
+            // Supplement with bounds-based hit testing — some platforms (e.g. macOS AppKit)
+            // don't traverse into all containers via GetVisualTreeElements
+            var boundsHits = _treeWalker.HitTestByBounds(x, y, _app!, windowIndex);
+            var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            var allHits = new List<IVisualTreeElement>();
+            foreach (var h in platformHits)
+            {
+                seen.Add(h);
+                allHits.Add(h);
+            }
+            foreach (var bh in boundsHits)
+            {
+                if (seen.Add(bh))
+                    allHits.Add(bh);
+            }
+
             var elements = new List<object>();
 
             // Detect modal pages — elements behind the topmost modal should be excluded
@@ -419,7 +436,7 @@ public class DevFlowAgentService : IDisposable
                 elements.Add(synInfo);
             }
 
-            foreach (var hit in hits)
+            foreach (var hit in allHits)
             {
                 if (hit is not IVisualTreeElement vte) continue;
 
