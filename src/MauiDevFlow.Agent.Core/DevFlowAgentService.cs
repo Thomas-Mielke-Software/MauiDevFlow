@@ -511,16 +511,18 @@ public class DevFlowAgentService : IDisposable
 
     /// <summary>
     /// Checks if a synthetic marker belongs to the given modal page context.
+    /// The modal page may be a NavigationPage, TabbedPage, or FlyoutPage wrapping
+    /// inner pages, so we use descendant checks rather than reference equality.
     /// </summary>
     private static bool IsSyntheticForPage(object marker, Page modalPage)
     {
         return marker switch
         {
-            VisualTreeWalker.NavBarTitleMarker m => ReferenceEquals(m.Page, modalPage),
-            ToolbarItem ti => modalPage.ToolbarItems.Contains(ti),
-            VisualTreeWalker.BackButtonMarker => true, // back button is always relevant to current context
-            VisualTreeWalker.SearchHandlerMarker => false, // SearchHandler is Shell-only, not on modals
-            _ => false // Shell-level synthetics (flyout, tabs) are behind the modal
+            VisualTreeWalker.NavBarTitleMarker m => IsDescendantOfPage(m.Page, modalPage),
+            ToolbarItem ti => IsDescendantOfPage(ti, modalPage),
+            VisualTreeWalker.BackButtonMarker => true,
+            VisualTreeWalker.SearchHandlerMarker => false,
+            _ => false
         };
     }
 
