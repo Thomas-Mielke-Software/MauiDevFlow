@@ -394,11 +394,18 @@ public class DevFlowAgentService : IDisposable
             var hits = VisualTreeElementExtensions.GetVisualTreeElements(window, x, y);
             var elements = new List<object>();
 
+            // Detect modal pages — elements behind the topmost modal should be excluded
+            var modalPage = window.Navigation?.ModalStack?.LastOrDefault();
+
             // Check synthetic elements first — they represent visible nav chrome
             // (nav bar, tab bar, flyout button) that sits on top of MAUI content.
             var syntheticHits = _treeWalker.HitTestSynthetics(x, y);
             foreach (var (synId, marker, bounds) in syntheticHits)
             {
+                // If modal is active, only include synthetics belonging to the modal page
+                if (modalPage != null && !IsSyntheticForPage(marker, modalPage))
+                    continue;
+
                 var synInfo = new Dictionary<string, object?>
                 {
                     ["id"] = synId,
@@ -418,6 +425,10 @@ public class DevFlowAgentService : IDisposable
 
                 // Skip elements under inactive ShellItem subtrees
                 if (activeShellItemIds != null && IsUnderInactiveShellItem(hit, activeShellItemIds))
+                    continue;
+
+                // Skip elements behind the modal page
+                if (modalPage != null && !IsDescendantOfPage(hit, modalPage))
                     continue;
 
                 var id = _treeWalker.GetIdForElement(vte);
@@ -481,6 +492,36 @@ public class DevFlowAgentService : IDisposable
             current = current.Parent;
         }
         return false;
+    }
+
+    /// <summary>
+    /// Checks if an element is a descendant of the given page (or the page itself).
+    /// Used to filter hit test results when a modal page is active.
+    /// </summary>
+    private static bool IsDescendantOfPage(object element, Page page)
+    {
+        var current = element as Element;
+        while (current != null)
+        {
+            if (ReferenceEquals(current, page)) return true;
+            current = current.Parent;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Checks if a synthetic marker belongs to the given modal page context.
+    /// </summary>
+    private static bool IsSyntheticForPage(object marker, Page modalPage)
+    {
+        return marker switch
+        {
+            VisualTreeWalker.NavBarTitleMarker m => ReferenceEquals(m.Page, modalPage),
+            ToolbarItem ti => modalPage.ToolbarItems.Contains(ti),
+            VisualTreeWalker.BackButtonMarker => true, // back button is always relevant to current context
+            VisualTreeWalker.SearchHandlerMarker => false, // SearchHandler is Shell-only, not on modals
+            _ => false // Shell-level synthetics (flyout, tabs) are behind the modal
+        };
     }
 
     protected virtual async Task<HttpResponse> HandleScreenshot(HttpRequest request)
