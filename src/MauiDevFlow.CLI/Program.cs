@@ -362,15 +362,16 @@ class Program
         var logsFollowOption = new Option<bool>("--follow", () => false, "Stream logs in real-time (Ctrl+C to stop)");
         logsFollowOption.AddAlias("-f");
         var logsJsonOption = new Option<bool>("--json", () => false, "Output as JSONL (machine-readable, use with --follow)");
-        var mauiLogsCmd = new Command("logs", "Fetch application logs") { logsLimitOption, logsSkipOption, logsSourceOption, logsFollowOption, logsJsonOption };
-        mauiLogsCmd.SetHandler(async (host, port, limit, skip, source, follow, json) =>
+        var logsReplayOption = new Option<int>("--replay", () => 100, "Number of recent entries to replay on connect (use with --follow, 0 to skip)");
+        var mauiLogsCmd = new Command("logs", "Fetch application logs") { logsLimitOption, logsSkipOption, logsSourceOption, logsFollowOption, logsJsonOption, logsReplayOption };
+        mauiLogsCmd.SetHandler(async (host, port, limit, skip, source, follow, json, replay) =>
         {
             if (follow)
-                await MauiLogsFollowAsync(host, port, source, json);
+                await MauiLogsFollowAsync(host, port, source, json, replay);
             else
                 await MauiLogsAsync(host, port, limit, skip, source);
         },
-            agentHostOption, agentPortOption, logsLimitOption, logsSkipOption, logsSourceOption, logsFollowOption, logsJsonOption);
+            agentHostOption, agentPortOption, logsLimitOption, logsSkipOption, logsSourceOption, logsFollowOption, logsJsonOption, logsReplayOption);
         mauiCommand.Add(mauiLogsCmd);
 
         // ── Network monitoring command ──
@@ -1442,14 +1443,19 @@ class Program
         catch (Exception ex) { WriteError(ex.Message); }
     }
 
-    private static async Task MauiLogsFollowAsync(string host, int port, string? source, bool json)
+    private static async Task MauiLogsFollowAsync(string host, int port, string? source, bool json, int replay)
     {
         var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
-        var wsUrl = $"ws://{host}:{port}/ws/logs";
+        var queryParams = new List<string>();
         if (!string.IsNullOrEmpty(source))
-            wsUrl += $"?source={Uri.EscapeDataString(source)}";
+            queryParams.Add($"source={Uri.EscapeDataString(source)}");
+        if (replay != 100)
+            queryParams.Add($"replay={replay}");
+        var wsUrl = $"ws://{host}:{port}/ws/logs";
+        if (queryParams.Count > 0)
+            wsUrl += "?" + string.Join("&", queryParams);
 
         while (!cts.Token.IsCancellationRequested)
         {

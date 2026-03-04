@@ -1357,10 +1357,18 @@ public class DevFlowAgentService : IDisposable
         // Parse optional source filter from query string
         request.QueryParams.TryGetValue("source", out var sourceFilter);
 
+        // Parse optional replay count (default 100, 0 to skip replay)
+        var replayCount = 100;
+        if (request.QueryParams.TryGetValue("replay", out var replayStr) && int.TryParse(replayStr, out var rc))
+            replayCount = Math.Max(0, rc);
+
         // Send replay of recent log entries
-        var recent = _logProvider.Reader.Read(100, 0, sourceFilter);
-        var replayMsg = JsonSerializer.Serialize(new { type = "replay", entries = recent });
-        await AgentHttpServer.WebSocketSendTextAsync(stream, replayMsg, ct);
+        if (replayCount > 0)
+        {
+            var recent = _logProvider.Reader.Read(replayCount, 0, sourceFilter);
+            var replayMsg = JsonSerializer.Serialize(new { type = "replay", entries = recent });
+            await AgentHttpServer.WebSocketSendTextAsync(stream, replayMsg, ct);
+        }
 
         // Subscribe to live log entries
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
