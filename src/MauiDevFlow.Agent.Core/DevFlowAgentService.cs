@@ -415,6 +415,9 @@ public class DevFlowAgentService : IDisposable
                         Width = double.IsFinite(ve.Frame.Width) ? ve.Frame.Width : 0,
                         Height = double.IsFinite(ve.Frame.Height) ? ve.Frame.Height : 0
                     };
+
+                    var wb = _treeWalker.ResolveWindowBoundsPublic(ve);
+                    if (wb != null) info["windowBounds"] = wb;
                 }
                 if (hit is Label l) info["text"] = l.Text;
                 else if (hit is Button b) info["text"] = b.Text;
@@ -430,6 +433,7 @@ public class DevFlowAgentService : IDisposable
                     ["id"] = synId,
                     ["type"] = _treeWalker.GetSyntheticTypeName(marker),
                     ["bounds"] = bounds,
+                    ["windowBounds"] = bounds, // synthetic bounds are already window-absolute
                     ["synthetic"] = true,
                 };
                 var text = _treeWalker.GetSyntheticText(marker);

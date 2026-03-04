@@ -44,6 +44,10 @@ public class ElementInfo
     [JsonPropertyName("bounds")]
     public BoundsInfo? Bounds { get; set; }
 
+    [JsonPropertyName("windowBounds")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public BoundsInfo? WindowBounds { get; set; }
+
     [JsonPropertyName("gestures")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public List<string>? Gestures { get; set; }

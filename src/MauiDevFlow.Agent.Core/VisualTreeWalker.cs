@@ -138,9 +138,12 @@ public class VisualTreeWalker
             IsEnabled = true,
         };
 
-        // Set bounds if available
+        // Set bounds if available (synthetic bounds are already window-absolute)
         if (_syntheticBounds.TryGetValue(id, out var bounds))
+        {
             info.Bounds = bounds;
+            info.WindowBounds = bounds;
+        }
 
         // Enrich with MAUI properties
         PopulateSyntheticProperties(info, marker);
@@ -220,6 +223,18 @@ public class VisualTreeWalker
     /// from platform-native views (UINavigationBar, UITabBar, Toolbar, etc.).
     /// </summary>
     protected virtual BoundsInfo? ResolveSyntheticBounds(object marker) => null;
+
+    /// <summary>
+    /// Override in platform-specific subclasses to resolve window-absolute bounds
+    /// for a VisualElement using native coordinate APIs (e.g. UIView.ConvertRectToView,
+    /// View.GetLocationOnScreen, Widget.ComputeBounds).
+    /// </summary>
+    protected virtual BoundsInfo? ResolveWindowBounds(VisualElement ve) => null;
+
+    /// <summary>
+    /// Public accessor for ResolveWindowBounds, used by DevFlowAgentService for hit test results.
+    /// </summary>
+    public BoundsInfo? ResolveWindowBoundsPublic(VisualElement ve) => ResolveWindowBounds(ve);
 
     /// <summary>
     /// Walks the visual tree starting from the application's windows.
@@ -756,6 +771,7 @@ public class VisualTreeWalker
             if (bounds != null)
             {
                 info.Bounds = bounds;
+                info.WindowBounds = bounds;
                 _syntheticBounds[id] = bounds;
             }
         }
@@ -876,6 +892,9 @@ public class VisualTreeWalker
 
             // Populate native view info from handler
             PopulateNativeInfo(info, ve);
+
+            // Resolve window-absolute bounds via platform-native APIs
+            info.WindowBounds = ResolveWindowBounds(ve);
         }
 
         // Extract text from common controls (including Shell elements)

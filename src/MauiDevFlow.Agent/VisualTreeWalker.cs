@@ -153,6 +153,75 @@ public class PlatformVisualTreeWalker : VisualTreeWalker
         catch { }
     }
 
+    protected override BoundsInfo? ResolveWindowBounds(VisualElement ve)
+    {
+        try
+        {
+            var platformView = ve.Handler?.PlatformView;
+            if (platformView == null) return null;
+
+#if IOS || MACCATALYST
+            if (platformView is UIKit.UIView uiView && uiView.Window != null)
+            {
+                var windowRect = uiView.ConvertRectToView(uiView.Bounds, uiView.Window.RootViewController?.View ?? uiView.Window);
+                return new BoundsInfo
+                {
+                    X = windowRect.X,
+                    Y = windowRect.Y,
+                    Width = windowRect.Width,
+                    Height = windowRect.Height
+                };
+            }
+#elif ANDROID
+            if (platformView is Android.Views.View androidView)
+            {
+                var location = new int[2];
+                androidView.GetLocationInWindow(location);
+                var density = androidView.Context?.Resources?.DisplayMetrics?.Density ?? 1f;
+                return new BoundsInfo
+                {
+                    X = location[0] / density,
+                    Y = location[1] / density,
+                    Width = androidView.Width / density,
+                    Height = androidView.Height / density
+                };
+            }
+#elif WINDOWS
+            if (platformView is Microsoft.UI.Xaml.UIElement uiElement)
+            {
+                var transform = uiElement.TransformToVisual(null);
+                var point = transform.TransformPoint(new Windows.Foundation.Point(0, 0));
+                if (uiElement is Microsoft.UI.Xaml.FrameworkElement fe)
+                {
+                    return new BoundsInfo
+                    {
+                        X = point.X,
+                        Y = point.Y,
+                        Width = fe.ActualWidth,
+                        Height = fe.ActualHeight
+                    };
+                }
+            }
+#elif MACOS
+            if (platformView is AppKit.NSView nsView && nsView.Window?.ContentView != null)
+            {
+                var windowRect = nsView.ConvertRectToView(nsView.Bounds, nsView.Window.ContentView);
+                // NSView uses bottom-left origin; convert to top-left
+                var contentHeight = nsView.Window.ContentView.Bounds.Height;
+                return new BoundsInfo
+                {
+                    X = windowRect.X,
+                    Y = contentHeight - windowRect.Y - windowRect.Height,
+                    Width = windowRect.Width,
+                    Height = windowRect.Height
+                };
+            }
+#endif
+            return null;
+        }
+        catch { return null; }
+    }
+
 #if IOS || MACCATALYST
     private BoundsInfo? ResolveBoundsApple(object marker)
     {

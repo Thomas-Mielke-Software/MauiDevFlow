@@ -8,6 +8,31 @@ namespace MauiDevFlow.Agent.Gtk;
 /// </summary>
 public class GtkVisualTreeWalker : VisualTreeWalker
 {
+    protected override BoundsInfo? ResolveWindowBounds(VisualElement ve)
+    {
+        try
+        {
+            if (ve.Handler?.PlatformView is not global::Gtk.Widget widget)
+                return null;
+
+            var root = widget.GetRoot();
+            if (root is not global::Gtk.Widget rootWidget) return null;
+
+            if (widget.ComputeBounds(rootWidget, out var rect))
+            {
+                return new BoundsInfo
+                {
+                    X = rect.GetX(),
+                    Y = rect.GetY(),
+                    Width = rect.GetWidth(),
+                    Height = rect.GetHeight()
+                };
+            }
+        }
+        catch { }
+        return null;
+    }
+
     protected override void PopulateNativeInfo(ElementInfo info, VisualElement ve)
     {
         try
