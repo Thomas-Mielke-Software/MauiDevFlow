@@ -1404,12 +1404,23 @@ public class DevFlowAgentService : IDisposable
                 return $"No scrollable ancestor found for element '{body.ElementId}'";
             }
 
-            // Priority 3: Delta scroll with no element — find first scrollable on page
+            // Priority 3: Delta scroll with no element — find first scrollable on current page
             var pageWindow = GetWindow(ParseWindowIndex(request));
             if (pageWindow?.Page == null) return "No page available";
 
-            // 3a: Try ScrollView first
-            var targetScroll = FindDescendant<ScrollView>(pageWindow.Page);
+            // Use the current visible page (Shell.CurrentPage or the window page)
+            var currentPage = (pageWindow.Page as Shell)?.CurrentPage ?? pageWindow.Page;
+
+            // 3a: Try ItemsView via native scroll first (CollectionView/ListView are more common scroll targets)
+            var targetItemsView = FindDescendant<ItemsView>(currentPage);
+            if (targetItemsView is VisualElement ive)
+            {
+                if (await TryNativeScroll(ive, body.DeltaX, body.DeltaY))
+                    return "ok";
+            }
+
+            // 3b: Try ScrollView on current page
+            var targetScroll = FindDescendant<ScrollView>(currentPage);
             if (targetScroll != null)
             {
                 var newX = targetScroll.ScrollX + body.DeltaX;
@@ -1420,14 +1431,6 @@ public class DevFlowAgentService : IDisposable
                     () => targetScroll.ScrollToAsync(x, y, body.Animated),
                     () => targetScroll.ScrollToAsync(x, y, false));
                 return "ok";
-            }
-
-            // 3b: Try ItemsView via native scroll (covers CollectionView and ListView)
-            var targetItemsView = FindDescendant<ItemsView>(pageWindow.Page);
-            if (targetItemsView is VisualElement ive)
-            {
-                if (await TryNativeScroll(ive, body.DeltaX, body.DeltaY))
-                    return "ok";
             }
 
             return "No scrollable view found on page";
