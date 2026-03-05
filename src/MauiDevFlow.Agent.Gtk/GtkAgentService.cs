@@ -77,6 +77,39 @@ public class GtkAgentService : DevFlowAgentService
         return base.GetNativeWindowSize(window);
     }
 
+    protected override Task<bool> TryNativeScroll(VisualElement element, double deltaX, double deltaY)
+    {
+        try
+        {
+            var target = element;
+            while (target != null)
+            {
+                if (target.Handler?.PlatformView is global::Gtk.Widget widget)
+                {
+                    // Walk up GTK widget hierarchy looking for ScrolledWindow
+                    var current = widget;
+                    while (current != null)
+                    {
+                        if (current is global::Gtk.ScrolledWindow scrolledWindow)
+                        {
+                            var hAdj = scrolledWindow.GetHadjustment();
+                            var vAdj = scrolledWindow.GetVadjustment();
+                            if (hAdj != null && deltaX != 0)
+                                hAdj.SetValue(Math.Max(hAdj.GetLower(), Math.Min(hAdj.GetValue() + deltaX, hAdj.GetUpper() - hAdj.GetPageSize())));
+                            if (vAdj != null && deltaY != 0)
+                                vAdj.SetValue(Math.Max(vAdj.GetLower(), Math.Min(vAdj.GetValue() - deltaY, vAdj.GetUpper() - vAdj.GetPageSize())));
+                            return Task.FromResult(true);
+                        }
+                        current = current.GetParent() as global::Gtk.Widget;
+                    }
+                }
+                target = target.Parent as VisualElement;
+            }
+        }
+        catch { }
+        return Task.FromResult(false);
+    }
+
     protected override bool TryNativeTap(VisualElement ve)
     {
         try

@@ -1306,9 +1306,43 @@ public class DevFlowAgentService : IDisposable
         if (body == null)
             return HttpResponse.Error("Request body is required");
 
+        var position = ParseScrollToPosition(body.ScrollToPosition);
+
         var result = await DispatchAsync(async () =>
         {
-            // If elementId is given, find the nearest ScrollView ancestor and scroll to that element
+            // Priority 1: Scroll by item index on a specific ItemsView
+            if (body.ItemIndex.HasValue)
+            {
+                object? targetObj = null;
+                if (!string.IsNullOrEmpty(body.ElementId))
+                {
+                    targetObj = _treeWalker.GetElementById(body.ElementId, _app);
+                    if (targetObj == null) return "Element not found";
+                }
+
+                // Find the ItemsView — either the target itself or its ancestor
+                var itemsView = targetObj as ItemsView ?? (targetObj is VisualElement tve ? FindAncestor<ItemsView>(tve) : null);
+                // Since ListView inherits from ItemsView in .NET 10+, ItemsView check covers both
+                if (itemsView == null && targetObj == null)
+                {
+                    // No element specified — find first ItemsView on the page
+                    var window = GetWindow(ParseWindowIndex(request));
+                    if (window?.Page != null)
+                        itemsView = FindDescendant<ItemsView>(window.Page);
+                }
+
+                if (itemsView != null)
+                {
+                    await ScrollWithTimeoutAsync(
+                        () => { itemsView.ScrollTo(body.ItemIndex.Value, body.GroupIndex ?? -1, position, body.Animated); return Task.CompletedTask; },
+                        () => { itemsView.ScrollTo(body.ItemIndex.Value, body.GroupIndex ?? -1, position, false); return Task.CompletedTask; });
+                    return "ok";
+                }
+
+                return "No CollectionView or ListView found for item-index scroll";
+            }
+
+            // Priority 2: Scroll element into view
             if (!string.IsNullOrEmpty(body.ElementId))
             {
                 var el = _treeWalker.GetElementById(body.ElementId, _app);
@@ -1316,47 +1350,149 @@ public class DevFlowAgentService : IDisposable
 
                 if (el is VisualElement ve)
                 {
-                    // Find the nearest ScrollView ancestor
+                    // 2a: Check for ItemsView ancestor — use BindingContext to find item index
+                    var ancestorItemsView = FindAncestor<ItemsView>(ve);
+                    if (ancestorItemsView != null && ve.BindingContext != null)
+                    {
+                        var index = GetItemIndex(ancestorItemsView.ItemsSource, ve.BindingContext);
+                        if (index >= 0)
+                        {
+                            await ScrollWithTimeoutAsync(
+                                () => { ancestorItemsView.ScrollTo(index, position: position, animate: body.Animated); return Task.CompletedTask; },
+                                () => { ancestorItemsView.ScrollTo(index, position: position, animate: false); return Task.CompletedTask; });
+                            return "ok";
+                        }
+                    }
+
+                    // 2b: Check for ScrollView ancestor (existing behavior)
                     var scrollView = FindAncestor<ScrollView>(ve);
                     if (scrollView != null)
                     {
                         await ScrollWithTimeoutAsync(
-                            () => scrollView.ScrollToAsync(ve, ScrollToPosition.MakeVisible, body.Animated),
-                            () => scrollView.ScrollToAsync(ve, ScrollToPosition.MakeVisible, false));
+                            () => scrollView.ScrollToAsync(ve, (ScrollToPosition)position, body.Animated),
+                            () => scrollView.ScrollToAsync(ve, (ScrollToPosition)position, false));
                         return "ok";
                     }
 
-                    // Maybe the element itself is a ScrollView
-                    if (el is ScrollView sv)
+                    // 2d: Element is itself a scrollable view — apply delta
+                    if (el is ScrollView sv && (body.DeltaX != 0 || body.DeltaY != 0))
                     {
+                        var newX = Math.Max(0, sv.ScrollX + body.DeltaX);
+                        var newY = Math.Max(0, sv.ScrollY + body.DeltaY);
                         await ScrollWithTimeoutAsync(
-                            () => sv.ScrollToAsync(body.DeltaX, body.DeltaY, body.Animated),
-                            () => sv.ScrollToAsync(body.DeltaX, body.DeltaY, false));
+                            () => sv.ScrollToAsync(newX, newY, body.Animated),
+                            () => sv.ScrollToAsync(newX, newY, false));
                         return "ok";
+                    }
+
+                    // 2e: Element is an ItemsView — apply delta via native scroll
+                    if (el is ItemsView && (body.DeltaX != 0 || body.DeltaY != 0))
+                    {
+                        if (await TryNativeScroll(ve, body.DeltaX, body.DeltaY))
+                            return "ok";
+                        return $"Native scroll not supported on this platform for {el.GetType().Name}";
+                    }
+
+                    // 2f: Try native scroll as final fallback
+                    if (body.DeltaX != 0 || body.DeltaY != 0)
+                    {
+                        if (await TryNativeScroll(ve, body.DeltaX, body.DeltaY))
+                            return "ok";
                     }
                 }
 
-                return $"No ScrollView ancestor found for element '{body.ElementId}'";
+                return $"No scrollable ancestor found for element '{body.ElementId}'";
             }
 
-            // Otherwise scroll by delta on the first ScrollView we find
-            var window = GetWindow(ParseWindowIndex(request));
-            if (window?.Page == null) return "No page available";
+            // Priority 3: Delta scroll with no element — find first scrollable on page
+            var pageWindow = GetWindow(ParseWindowIndex(request));
+            if (pageWindow?.Page == null) return "No page available";
 
-            var targetScroll = FindDescendant<ScrollView>(window.Page);
-            if (targetScroll == null) return "No ScrollView found on page";
+            // 3a: Try ScrollView first
+            var targetScroll = FindDescendant<ScrollView>(pageWindow.Page);
+            if (targetScroll != null)
+            {
+                var newX = targetScroll.ScrollX + body.DeltaX;
+                var newY = targetScroll.ScrollY + body.DeltaY;
+                var x = Math.Max(0, newX);
+                var y = Math.Max(0, newY);
+                await ScrollWithTimeoutAsync(
+                    () => targetScroll.ScrollToAsync(x, y, body.Animated),
+                    () => targetScroll.ScrollToAsync(x, y, false));
+                return "ok";
+            }
 
-            var newX = targetScroll.ScrollX + body.DeltaX;
-            var newY = targetScroll.ScrollY + body.DeltaY;
-            var x = Math.Max(0, newX);
-            var y = Math.Max(0, newY);
-            await ScrollWithTimeoutAsync(
-                () => targetScroll.ScrollToAsync(x, y, body.Animated),
-                () => targetScroll.ScrollToAsync(x, y, false));
-            return "ok";
+            // 3b: Try ItemsView via native scroll (covers CollectionView and ListView)
+            var targetItemsView = FindDescendant<ItemsView>(pageWindow.Page);
+            if (targetItemsView is VisualElement ive)
+            {
+                if (await TryNativeScroll(ive, body.DeltaX, body.DeltaY))
+                    return "ok";
+            }
+
+            return "No scrollable view found on page";
         });
 
         return result == "ok" ? HttpResponse.Ok("Scrolled") : HttpResponse.Error(result ?? "Scroll failed");
+    }
+
+    /// <summary>
+    /// Parse a ScrollToPosition string to the MAUI enum value.
+    /// </summary>
+    private static ScrollToPosition ParseScrollToPosition(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return ScrollToPosition.MakeVisible;
+        return value.ToLowerInvariant() switch
+        {
+            "start" => ScrollToPosition.Start,
+            "center" => ScrollToPosition.Center,
+            "end" => ScrollToPosition.End,
+            "makevisible" => ScrollToPosition.MakeVisible,
+            _ => ScrollToPosition.MakeVisible
+        };
+    }
+
+    /// <summary>
+    /// Get item from an IEnumerable by index.
+    /// </summary>
+    private static object? GetItemByIndex(System.Collections.IEnumerable? source, int index)
+    {
+        if (source == null) return null;
+        if (source is System.Collections.IList list && index >= 0 && index < list.Count)
+            return list[index];
+        var i = 0;
+        foreach (var item in source)
+        {
+            if (i == index) return item;
+            i++;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Find the index of an item in an IEnumerable by reference or equality.
+    /// </summary>
+    private static int GetItemIndex(System.Collections.IEnumerable? source, object item)
+    {
+        if (source == null) return -1;
+        if (source is System.Collections.IList list)
+            return list.IndexOf(item);
+        var i = 0;
+        foreach (var obj in source)
+        {
+            if (ReferenceEquals(obj, item) || Equals(obj, item)) return i;
+            i++;
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// Try to scroll a native view by pixel delta. Override in platform-specific subclasses.
+    /// Returns true if the scroll was handled natively.
+    /// </summary>
+    protected virtual Task<bool> TryNativeScroll(VisualElement element, double deltaX, double deltaY)
+    {
+        return Task.FromResult(false);
     }
 
     /// <summary>
@@ -1787,4 +1923,7 @@ public class ScrollRequest
     public double DeltaX { get; set; }
     public double DeltaY { get; set; }
     public bool Animated { get; set; } = true;
+    public int? ItemIndex { get; set; }
+    public int? GroupIndex { get; set; }
+    public string? ScrollToPosition { get; set; }
 }

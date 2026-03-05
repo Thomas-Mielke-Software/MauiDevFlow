@@ -330,7 +330,7 @@ resolution options are provided.
 | `MAUI set-property <elementId> <prop> <value>` | Set property (live editing — colors, text, sizes, etc.) |
 | `MAUI element <elementId>` | Full element JSON (type, bounds, children, etc.) |
 | `MAUI navigate <route>` | Shell navigation (e.g. `//native`, `//blazor`) |
-| `MAUI scroll [--element id] [--dx N] [--dy N] [--window W]` | Scroll by delta or scroll element into view |
+| `MAUI scroll [--element id] [--dx N] [--dy N] [--item-index N] [--group-index N] [--position P] [--window W]` | Scroll by delta, item index, or scroll element into view. `--item-index` scrolls to a specific item in CollectionView/ListView (works even for virtualized off-screen items). `--position`: MakeVisible (default), Start, Center, End. Delta scroll (`--dy -500`) uses native platform scroll for CollectionView |
 | `MAUI resize <width> <height> [--window W]` | Resize app window. Window is 0-based index; default first window |
 | `MAUI logs [--limit N] [--skip N] [--source S] [--follow]` | Fetch or stream application logs. `--follow` / `-f` streams in real-time (Ctrl+C to stop). Source: native, webview, or omit for all |
 | `MAUI recording start [--output path] [--timeout 30]` | Start screen recording. Default timeout 30s |
@@ -446,6 +446,7 @@ their input.
 - **Shell apps:** Read `AppShell.xaml` to discover routes before navigating. Routes are
   case-sensitive and often lowercase.
 - **CollectionView items:** Tap the container Grid/StackLayout, not inner Labels/Images.
+  Use `--item-index` to scroll to off-screen items.
 - **Ambiguous `--text`:** When text appears on multiple pages, use explicit IDs from `tree`.
 
 ## AI Agent Best Practices
@@ -537,10 +538,25 @@ the screenshot dimensions accordingly. This happens server-side before transfer.
 ### CollectionView / ListView
 - **Tapping items:** Always tap the item's container (Grid/StackLayout), not inner elements
   (Label/Image). The item template's root element handles selection.
-- **Scrolling:** `MAUI scroll` uses MAUI's `ScrollView.ScrollToAsync` and does **not** work
-  with `CollectionView` or `ListView` (which use native platform scrolling). Items off-screen
-  appear in the tree with `0x0` or `-1x-1` bounds — tap them by ID regardless (the platform
-  will scroll to make them visible on tap if the app handles `SelectionChanged`).
+- **Virtualization:** CollectionView/ListView use item virtualization — only visible items
+  (plus a small buffer) exist in the visual tree. Off-screen items have NO visual element.
+  The tree shows `itemCount` in the CollectionView's properties so you know total items.
+- **Scrolling by item index** (best for reaching off-screen items):
+  ```bash
+  maui-devflow MAUI scroll --element <cvId> --item-index 20 --position Center
+  ```
+  This works even for items not in the tree yet — the platform scrolls to materialize them.
+- **Scrolling by pixel delta** (for fine-grained scrolling):
+  ```bash
+  maui-devflow MAUI scroll --element <cvId> --dy -500
+  ```
+  Uses native platform scroll (UIScrollView/RecyclerView) — works on CollectionView.
+- **Workflow:** Get tree → note `itemCount` → scroll by index → re-query tree → interact:
+  ```bash
+  maui-devflow MAUI tree --depth 15   # CollectionView shows itemCount: 25
+  maui-devflow MAUI scroll --item-index 20
+  maui-devflow MAUI tree --depth 15   # items around index 20 now visible
+  ```
 
 ### Implicit Resolution Gotchas
 - **`--text` searches the entire visual tree**, including hidden pages (other Shell tabs).

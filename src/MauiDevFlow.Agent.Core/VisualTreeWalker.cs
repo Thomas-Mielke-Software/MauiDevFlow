@@ -1278,6 +1278,25 @@ public class VisualTreeWalker
                 info.Gestures = gestures;
         }
 
+        // Populate ItemsView metadata (item count for CollectionView/ListView/CarouselView)
+        if (element is ItemsView itemsView)
+        {
+            info.NativeProperties ??= new Dictionary<string, string?>();
+            try
+            {
+                if (itemsView.ItemsSource != null)
+                {
+                    var count = itemsView.ItemsSource switch
+                    {
+                        System.Collections.ICollection c => c.Count,
+                        _ => itemsView.ItemsSource.Cast<object>().Count()
+                    };
+                    info.NativeProperties["itemCount"] = count.ToString();
+                }
+            }
+            catch { /* ItemsSource may not support counting */ }
+        }
+
         return info;
     }
 

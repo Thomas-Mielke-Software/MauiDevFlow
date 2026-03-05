@@ -53,6 +53,115 @@ public class PlatformAgentService : DevFlowAgentService
         }
     }
 
+    protected override Task<bool> TryNativeScroll(VisualElement element, double deltaX, double deltaY)
+    {
+        try
+        {
+            // Walk up from the element to find a native scrollable view
+            var target = element;
+            while (target != null)
+            {
+                var platformView = target.Handler?.PlatformView;
+                if (platformView != null)
+                {
+#if IOS || MACCATALYST
+                    // Find UIScrollView in the native hierarchy
+                    var uiScrollView = FindNativeAncestor<UIKit.UIScrollView>(platformView as UIKit.UIView);
+                    if (uiScrollView != null)
+                    {
+                        var offset = uiScrollView.ContentOffset;
+                        var newX = Math.Max(0, Math.Min(offset.X + deltaX, uiScrollView.ContentSize.Width - uiScrollView.Bounds.Width));
+                        var newY = Math.Max(0, Math.Min(offset.Y - deltaY, uiScrollView.ContentSize.Height - uiScrollView.Bounds.Height));
+                        uiScrollView.SetContentOffset(new CoreGraphics.CGPoint(newX, newY), animated: true);
+                        return Task.FromResult(true);
+                    }
+#elif ANDROID
+                    // Find RecyclerView or ScrollView in the native hierarchy
+                    var recyclerView = FindNativeAncestorAndroid<AndroidX.RecyclerView.Widget.RecyclerView>(platformView as Android.Views.View);
+                    if (recyclerView != null)
+                    {
+                        recyclerView.ScrollBy((int)deltaX, (int)-deltaY);
+                        return Task.FromResult(true);
+                    }
+                    var androidScrollView = FindNativeAncestorAndroid<Android.Widget.ScrollView>(platformView as Android.Views.View);
+                    if (androidScrollView != null)
+                    {
+                        androidScrollView.ScrollBy((int)deltaX, (int)-deltaY);
+                        return Task.FromResult(true);
+                    }
+#elif WINDOWS
+                    // Find ScrollViewer in the WinUI XAML tree
+                    var scrollViewer = FindWinUIScrollViewer(platformView as Microsoft.UI.Xaml.DependencyObject);
+                    if (scrollViewer != null)
+                    {
+                        scrollViewer.ChangeView(
+                            scrollViewer.HorizontalOffset + deltaX,
+                            scrollViewer.VerticalOffset - deltaY,
+                            null);
+                        return Task.FromResult(true);
+                    }
+#endif
+                }
+                target = target.Parent as VisualElement;
+            }
+        }
+        catch { }
+        return Task.FromResult(false);
+    }
+
+#if IOS || MACCATALYST
+    private static T? FindNativeAncestor<T>(UIKit.UIView? view) where T : UIKit.UIView
+    {
+        var current = view;
+        while (current != null)
+        {
+            if (current is T match) return match;
+            current = current.Superview;
+        }
+        return null;
+    }
+#elif ANDROID
+    private static T? FindNativeAncestorAndroid<T>(Android.Views.View? view) where T : Android.Views.View
+    {
+        var current = view;
+        while (current != null)
+        {
+            if (current is T match) return match;
+            current = current.Parent as Android.Views.View;
+        }
+        return null;
+    }
+#elif WINDOWS
+    private static Microsoft.UI.Xaml.Controls.ScrollViewer? FindWinUIScrollViewer(Microsoft.UI.Xaml.DependencyObject? obj)
+    {
+        if (obj == null) return null;
+        if (obj is Microsoft.UI.Xaml.Controls.ScrollViewer sv) return sv;
+        // Walk up the visual tree
+        var parent = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(obj);
+        while (parent != null)
+        {
+            if (parent is Microsoft.UI.Xaml.Controls.ScrollViewer scrollViewer)
+                return scrollViewer;
+            parent = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(parent);
+        }
+        // Also search children (CollectionView wraps a ScrollViewer internally)
+        return FindWinUIScrollViewerInChildren(obj);
+    }
+
+    private static Microsoft.UI.Xaml.Controls.ScrollViewer? FindWinUIScrollViewerInChildren(Microsoft.UI.Xaml.DependencyObject parent)
+    {
+        var count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(parent);
+        for (var i = 0; i < count; i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(parent, i);
+            if (child is Microsoft.UI.Xaml.Controls.ScrollViewer sv) return sv;
+            var found = FindWinUIScrollViewerInChildren(child);
+            if (found != null) return found;
+        }
+        return null;
+    }
+#endif
+
     protected override bool TryNativeTap(VisualElement ve)
     {
         try

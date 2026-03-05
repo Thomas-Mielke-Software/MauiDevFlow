@@ -376,11 +376,14 @@ class Program
         mauiCommand.Add(mauiNavigateCmd);
 
         // MAUI scroll
-        var scrollElementIdOption = new Option<string?>("--element", "Element ID to scroll into view");
-        var scrollDeltaXOption = new Option<double>("--dx", () => 0, "Horizontal scroll delta");
-        var scrollDeltaYOption = new Option<double>("--dy", () => 0, "Vertical scroll delta");
+        var scrollElementIdOption = new Option<string?>("--element", "Element ID to scroll into view or to scroll within");
+        var scrollDeltaXOption = new Option<double>("--dx", () => 0, "Horizontal scroll delta (pixels)");
+        var scrollDeltaYOption = new Option<double>("--dy", () => 0, "Vertical scroll delta (pixels, negative = down)");
         var scrollAnimatedOption = new Option<bool>("--animated", () => true, "Animate the scroll");
-        var mauiScrollCmd = new Command("scroll", "Scroll content by delta or scroll element into view") { scrollElementIdOption, scrollDeltaXOption, scrollDeltaYOption, scrollAnimatedOption, windowOption };
+        var scrollItemIndexOption = new Option<int?>("--item-index", "Item index to scroll to (for CollectionView/ListView)");
+        var scrollGroupIndexOption = new Option<int?>("--group-index", "Group index for grouped CollectionView");
+        var scrollPositionOption = new Option<string?>("--position", "Scroll position: MakeVisible (default), Start, Center, End");
+        var mauiScrollCmd = new Command("scroll", "Scroll content by delta, item index, or scroll element into view") { scrollElementIdOption, scrollDeltaXOption, scrollDeltaYOption, scrollAnimatedOption, scrollItemIndexOption, scrollGroupIndexOption, scrollPositionOption, windowOption };
         mauiScrollCmd.SetHandler(async (ctx) =>
         {
             var host = ctx.ParseResult.GetValueForOption(agentHostOption)!;
@@ -391,7 +394,10 @@ class Program
                 ctx.ParseResult.GetValueForOption(scrollDeltaXOption),
                 ctx.ParseResult.GetValueForOption(scrollDeltaYOption),
                 ctx.ParseResult.GetValueForOption(scrollAnimatedOption),
-                ctx.ParseResult.GetValueForOption(windowOption));
+                ctx.ParseResult.GetValueForOption(windowOption),
+                ctx.ParseResult.GetValueForOption(scrollItemIndexOption),
+                ctx.ParseResult.GetValueForOption(scrollGroupIndexOption),
+                ctx.ParseResult.GetValueForOption(scrollPositionOption));
         });
         mauiCommand.Add(mauiScrollCmd);
 
@@ -1839,19 +1845,21 @@ class Program
         catch (Exception ex) { OutputWriter.WriteError(ex.Message, json); _errorOccurred = true; }
     }
 
-    private static async Task MauiScrollAsync(string host, int port, bool json, string? elementId, double dx, double dy, bool animated, int? window)
+    private static async Task MauiScrollAsync(string host, int port, bool json, string? elementId, double dx, double dy, bool animated, int? window, int? itemIndex = null, int? groupIndex = null, string? scrollToPosition = null)
     {
         try
         {
             using var client = new MauiDevFlow.Driver.AgentClient(host, port);
-            var success = await client.ScrollAsync(elementId, dx, dy, animated, window);
+            var success = await client.ScrollAsync(elementId, dx, dy, animated, window, itemIndex, groupIndex, scrollToPosition);
             if (json)
             {
                 OutputWriter.WriteActionResult(success, "Scrolled", elementId, json);
             }
             else
             {
-                if (elementId != null)
+                if (itemIndex.HasValue)
+                    Console.WriteLine(success ? $"Scrolled to item index {itemIndex.Value}" : $"Failed to scroll to item index {itemIndex.Value}");
+                else if (elementId != null)
                     Console.WriteLine(success ? $"Scrolled to element: {elementId}" : $"Failed to scroll to element: {elementId}");
                 else
                     Console.WriteLine(success ? $"Scrolled by dx={dx}, dy={dy}" : "Failed to scroll");

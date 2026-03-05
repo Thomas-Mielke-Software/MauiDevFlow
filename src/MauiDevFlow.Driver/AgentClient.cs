@@ -123,13 +123,13 @@ public class AgentClient : IDisposable
     }
 
     /// <summary>
-    /// Scroll by delta or scroll an element into view.
+    /// Scroll by delta, item index, or scroll element into view.
     /// </summary>
-    public async Task<bool> ScrollAsync(string? elementId = null, double deltaX = 0, double deltaY = 0, bool animated = true, int? window = null)
+    public async Task<bool> ScrollAsync(string? elementId = null, double deltaX = 0, double deltaY = 0, bool animated = true, int? window = null, int? itemIndex = null, int? groupIndex = null, string? scrollToPosition = null)
     {
         var url = "/api/action/scroll";
         if (window != null) url += $"?window={window}";
-        return await PostActionAsync(url, new { elementId, deltaX, deltaY, animated });
+        return await PostActionAsync(url, new { elementId, deltaX, deltaY, animated, itemIndex, groupIndex, scrollToPosition });
     }
 
     /// <summary>
