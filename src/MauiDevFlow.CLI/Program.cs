@@ -895,6 +895,11 @@ class Program
         }, jsonOption, noJsonOption);
         rootCommand.Add(commandsCmd);
 
+        // ===== MCP server command =====
+        var mcpServeCmd = new Command("mcp-serve", "Start MCP (Model Context Protocol) server for AI agent integration via stdio");
+        mcpServeCmd.SetHandler(async () => await Mcp.McpServerHost.RunAsync());
+        rootCommand.Add(mcpServeCmd);
+
         _parser = new CommandLineBuilder(rootCommand)
             .UseDefaults()
             .Build();

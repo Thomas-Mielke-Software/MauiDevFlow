@@ -424,6 +424,59 @@ directory (or current directory if `--output` is not specified). Existing files 
 The file list is discovered dynamically from the repository, so new reference docs are picked up
 automatically.
 
+## MCP Server
+
+MauiDevFlow includes an MCP (Model Context Protocol) server for integration with AI coding agents in VS Code Copilot Chat, Claude Desktop, and other MCP-compatible hosts. The MCP server returns structured JSON and inline images — enabling AI agents to see screenshots directly and query the visual tree without text parsing.
+
+### Configuration
+
+Add to your VS Code MCP settings (`.vscode/mcp.json`):
+
+```json
+{
+  "servers": {
+    "maui-devflow": {
+      "command": "maui-devflow",
+      "args": ["mcp-serve"],
+      "transportType": "stdio"
+    }
+  }
+}
+```
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `maui_screenshot` | Capture screenshot — **returns image directly** to the AI agent |
+| `maui_tree` | Visual tree as structured JSON with element IDs, types, bounds, properties |
+| `maui_logs` | Structured log entries with level filtering |
+| `maui_network` | Captured HTTP requests with status, timing, sizes |
+| `maui_network_detail` | Full request/response detail including headers and body |
+| `maui_tap` | Tap a UI element by ID |
+| `maui_fill` | Fill text into an Entry/Editor/SearchBar |
+| `maui_clear` | Clear text from an input element |
+| `maui_scroll` | Scroll a ScrollView element |
+| `maui_navigate` | Navigate to a Shell route |
+| `maui_focus` | Set focus to an element |
+| `maui_resize` | Resize the app window |
+| `maui_set_property` | Set a property value at runtime |
+| `maui_get_property` | Get a property value |
+| `maui_query` | Query elements by type, AutomationId, or text |
+| `maui_query_css` | Query Blazor WebView elements via CSS selector |
+| `maui_element` | Get detailed info for a single element |
+| `maui_hittest` | Find element at screen coordinates |
+| `maui_list_agents` | List connected MAUI apps |
+| `maui_status` | Agent status (platform, version, app name) |
+| `maui_wait` | Wait for an agent to connect |
+| `maui_select_agent` | Set default agent for the session |
+| `maui_cdp_evaluate` | Execute JavaScript in a Blazor WebView |
+| `maui_cdp_screenshot` | Capture WebView screenshot via CDP |
+| `maui_cdp_source` | Get WebView HTML source |
+| `maui_cdp_webviews` | List registered Blazor WebViews |
+
+All tools accept an optional `agentPort` parameter. When omitted, the server auto-discovers the connected agent via the broker — same as the CLI.
+
 ## License
 
 MIT
