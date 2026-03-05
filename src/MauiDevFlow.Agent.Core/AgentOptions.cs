@@ -40,6 +40,13 @@ public class AgentOptions
     public int MaxLogFiles { get; set; } = 5;
 
     /// <summary>
+    /// Whether to capture Console.Out, Console.Error, and Trace/Debug output
+    /// into the file log pipeline. Output is tee'd — original streams still receive everything.
+    /// Default: true.
+    /// </summary>
+    public bool CaptureConsoleOutput { get; set; } = true;
+
+    /// <summary>
     /// Whether to intercept HttpClient requests for network monitoring. Default: true.
     /// When enabled, all IHttpClientFactory-created HttpClients are automatically monitored.
     /// </summary>

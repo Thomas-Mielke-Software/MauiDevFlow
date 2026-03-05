@@ -96,6 +96,12 @@ public static class AgentServiceExtensions
             var logProvider = new FileLogProvider(logDir, options.MaxLogFileSize, options.MaxLogFiles);
             service.SetLogProvider(logProvider);
             builder.Logging.AddProvider(logProvider);
+
+            if (options.CaptureConsoleOutput)
+            {
+                var capture = new ConsoleLogCapture(logProvider.Writer);
+                capture.Install();
+            }
         }
 
         // Auto-inject network monitoring handler into all IHttpClientFactory-created clients
