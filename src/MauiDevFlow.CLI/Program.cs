@@ -223,7 +223,6 @@ class Program
         var resolveTextOption = new Option<string?>("--text", "Resolve element by text content");
         var resolveIndexOption = new Option<int>("--index", () => 0, "Index when multiple elements match (0-based, default: first)");
         var andScreenshotOption = new Option<string?>("--and-screenshot", "Take screenshot after action (optional: output path)");
-        andScreenshotOption.SetDefaultValue(null);
         andScreenshotOption.Arity = ArgumentArity.ZeroOrOne;
         var andTreeOption = new Option<bool>("--and-tree", "Dump visual tree after action");
         var andTreeDepthOption = new Option<int>("--and-tree-depth", () => 2, "Max depth for --and-tree");
