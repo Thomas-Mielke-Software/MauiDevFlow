@@ -17,6 +17,42 @@ public class PlatformAgentService : DevFlowAgentService
 
     protected override VisualTreeWalker CreateTreeWalker() => new PlatformVisualTreeWalker();
 
+    protected override double GetWindowDisplayDensity(IWindow? window)
+    {
+        try
+        {
+#if IOS || MACCATALYST
+            if (window?.Handler?.PlatformView is UIKit.UIWindow uiWindow)
+                return uiWindow.Screen.Scale;
+            return UIKit.UIScreen.MainScreen.Scale;
+#elif ANDROID
+            if (window?.Handler?.PlatformView is Android.App.Activity activity)
+                return activity.Resources?.DisplayMetrics?.Density ?? 1.0;
+            if (Android.App.Application.Context.Resources?.DisplayMetrics is Android.Util.DisplayMetrics dm)
+                return dm.Density;
+            return 1.0;
+#elif WINDOWS
+            if (window?.Handler?.PlatformView is Microsoft.UI.Xaml.Window winuiWindow)
+            {
+                var xamlRoot = winuiWindow.Content?.XamlRoot;
+                if (xamlRoot != null)
+                    return xamlRoot.RasterizationScale;
+            }
+            return 1.0;
+#elif MACOS
+            if (window?.Handler?.PlatformView is AppKit.NSWindow nsWindow)
+                return nsWindow.BackingScaleFactor;
+            return AppKit.NSScreen.MainScreen?.BackingScaleFactor ?? 2.0;
+#else
+            return base.GetWindowDisplayDensity(window);
+#endif
+        }
+        catch
+        {
+            return base.GetWindowDisplayDensity(window);
+        }
+    }
+
     protected override bool TryNativeTap(VisualElement ve)
     {
         try

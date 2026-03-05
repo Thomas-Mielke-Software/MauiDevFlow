@@ -307,8 +307,9 @@ class Program
         var screenshotIdOption = new Option<string?>("--id", "Element ID to capture");
         var screenshotSelectorOption = new Option<string?>("--selector", "CSS selector to capture (first match)");
         var screenshotOverwriteOption = new Option<bool>("--overwrite", () => false, "Overwrite existing file (default: fail if exists)");
-        var screenshotMaxWidthOption = new Option<int?>("--max-width", "Resize screenshot to this max width (preserves aspect ratio). Reduces file size for AI agents on HiDPI displays");
-        var mauiScreenshotCmd = new Command("screenshot", "Take screenshot") { screenshotOutputOption, windowOption, screenshotIdOption, screenshotSelectorOption, screenshotOverwriteOption, screenshotMaxWidthOption };
+        var screenshotMaxWidthOption = new Option<int?>("--max-width", "Resize screenshot to this max width (overrides auto-scaling)");
+        var screenshotScaleOption = new Option<string?>("--scale", "Scale mode: 'native' keeps full HiDPI resolution, default auto-scales to 1x logical pixels");
+        var mauiScreenshotCmd = new Command("screenshot", "Take screenshot") { screenshotOutputOption, windowOption, screenshotIdOption, screenshotSelectorOption, screenshotOverwriteOption, screenshotMaxWidthOption, screenshotScaleOption };
         mauiScreenshotCmd.SetHandler(async (ctx) =>
         {
             var host = ctx.ParseResult.GetValueForOption(agentHostOption)!;
@@ -320,7 +321,8 @@ class Program
                 ctx.ParseResult.GetValueForOption(screenshotIdOption),
                 ctx.ParseResult.GetValueForOption(screenshotSelectorOption),
                 ctx.ParseResult.GetValueForOption(screenshotOverwriteOption),
-                ctx.ParseResult.GetValueForOption(screenshotMaxWidthOption));
+                ctx.ParseResult.GetValueForOption(screenshotMaxWidthOption),
+                ctx.ParseResult.GetValueForOption(screenshotScaleOption));
         });
         mauiCommand.Add(mauiScreenshotCmd);
 
@@ -1685,7 +1687,7 @@ class Program
         catch (Exception ex) { OutputWriter.WriteError(ex.Message, json, suggestions: new[] { "Run 'MAUI tree' to refresh element IDs" }); _errorOccurred = true; }
     }
 
-    private static async Task MauiScreenshotAsync(string host, int port, bool json, string? output, int? window, string? id, string? selector, bool overwrite = false, int? maxWidth = null)
+    private static async Task MauiScreenshotAsync(string host, int port, bool json, string? output, int? window, string? id, string? selector, bool overwrite = false, int? maxWidth = null, string? scale = null)
     {
         try
         {
@@ -1698,7 +1700,7 @@ class Program
             }
 
             using var client = new MauiDevFlow.Driver.AgentClient(host, port);
-            var data = await client.ScreenshotAsync(window, id, selector, maxWidth);
+            var data = await client.ScreenshotAsync(window, id, selector, maxWidth, scale);
             if (data == null)
             {
                 OutputWriter.WriteError("Failed to capture screenshot", json);
@@ -1709,13 +1711,14 @@ class Program
             var fullPath = Path.GetFullPath(filename);
             if (json)
             {
-                OutputWriter.WriteResult(new { path = fullPath, size = data.Length, maxWidth = maxWidth }, json);
+                OutputWriter.WriteResult(new { path = fullPath, size = data.Length, maxWidth = maxWidth, scale = scale ?? "auto" }, json);
             }
             else
             {
                 var target = id != null ? $" (element: {id})" : selector != null ? $" (selector: {selector})" : "";
-                var resized = maxWidth != null ? $" (max-width: {maxWidth}px)" : "";
-                Console.WriteLine($"Screenshot saved: {fullPath} ({data.Length} bytes){target}{resized}");
+                var scaleInfo = scale?.Equals("native", StringComparison.OrdinalIgnoreCase) == true ? " (native resolution)" :
+                                maxWidth != null ? $" (max-width: {maxWidth}px)" : " (auto-scaled to 1x)";
+                Console.WriteLine($"Screenshot saved: {fullPath} ({data.Length} bytes){target}{scaleInfo}");
             }
         }
         catch (Exception ex) { OutputWriter.WriteError(ex.Message, json); _errorOccurred = true; }

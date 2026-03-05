@@ -146,7 +146,7 @@ public class AgentClient : IDisposable
     /// Take a screenshot (returns PNG bytes).
     /// Optionally target a specific element by ID or CSS selector.
     /// </summary>
-    public async Task<byte[]?> ScreenshotAsync(int? window = null, string? elementId = null, string? selector = null, int? maxWidth = null)
+    public async Task<byte[]?> ScreenshotAsync(int? window = null, string? elementId = null, string? selector = null, int? maxWidth = null, string? scale = null)
     {
         try
         {
@@ -155,6 +155,7 @@ public class AgentClient : IDisposable
             if (elementId != null) queryParams.Add($"id={Uri.EscapeDataString(elementId)}");
             if (selector != null) queryParams.Add($"selector={Uri.EscapeDataString(selector)}");
             if (maxWidth != null) queryParams.Add($"maxWidth={maxWidth}");
+            if (scale != null) queryParams.Add($"scale={Uri.EscapeDataString(scale)}");
 
             var url = queryParams.Count > 0
                 ? $"{_baseUrl}/api/screenshot?{string.Join("&", queryParams)}"

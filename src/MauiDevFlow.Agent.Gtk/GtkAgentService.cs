@@ -17,6 +17,35 @@ public class GtkAgentService : DevFlowAgentService
     protected override string DeviceTypeName => "Virtual";
     protected override string IdiomName => "Desktop";
 
+    protected override double GetWindowDisplayDensity(IWindow? window)
+    {
+        try
+        {
+            // GTK4: get the scale factor from the native Gtk.Window's display/surface
+            if (window?.Handler?.PlatformView is global::Gtk.Window gtkWindow)
+            {
+                var surface = gtkWindow.GetSurface();
+                if (surface != null)
+                    return surface.GetScaleFactor();
+            }
+
+            // Fallback: walk widget hierarchy to find the Gtk.Window
+            if (window is Microsoft.Maui.Controls.Window mauiWindow)
+            {
+                if (mauiWindow.Page is Shell shell && shell.CurrentPage?.Handler?.PlatformView is global::Gtk.Widget cpWidget)
+                {
+                    var root = cpWidget.GetRoot();
+                    if (root is global::Gtk.Widget rootWidget)
+                        return rootWidget.GetScaleFactor();
+                }
+                if (mauiWindow.Page?.Handler?.PlatformView is global::Gtk.Widget pageWidget)
+                    return pageWidget.GetScaleFactor();
+            }
+        }
+        catch { }
+        return 1.0;
+    }
+
     protected override (double width, double height) GetNativeWindowSize(IWindow window)
     {
         try

@@ -177,6 +177,19 @@ public class DevFlowAgentService : IDisposable
     /// <summary>Device idiom for status reporting. Override for platforms without DeviceInfo.</summary>
     protected virtual string IdiomName => DeviceInfo.Current.Idiom.ToString();
 
+    /// <summary>
+    /// Gets the display density (scale factor) for a specific window. Returns 1.0 for standard,
+    /// 2.0 for @2x (Retina), 3.0 for @3x (iPhone Pro Max), etc.
+    /// Used to auto-scale screenshots to 1x logical resolution.
+    /// Override in platform-specific agents to query the native window's actual screen density,
+    /// which may vary across displays in multi-monitor setups.
+    /// </summary>
+    protected virtual double GetWindowDisplayDensity(IWindow? window)
+    {
+        try { return DeviceDisplay.MainDisplayInfo.Density; }
+        catch { return 1.0; }
+    }
+
     /// <summary>Gets native window dimensions when MAUI reports 0. Override for platform-specific access.</summary>
     protected virtual (double width, double height) GetNativeWindowSize(IWindow window) => (0, 0);
 
@@ -292,6 +305,7 @@ public class DevFlowAgentService : IDisposable
                 platform = PlatformName,
                 deviceType = DeviceTypeName,
                 idiom = IdiomName,
+                displayDensity = GetWindowDisplayDensity(window),
                 appName = _app?.GetType().Assembly.GetName().Name ?? "unknown",
                 running = _app != null,
                 cdpReady = _cdpWebViews.Any(w => w.IsReady),
@@ -551,6 +565,22 @@ public class DevFlowAgentService : IDisposable
         if (request.QueryParams.TryGetValue("maxWidth", out var mwStr) && int.TryParse(mwStr, out var mw) && mw > 0)
             maxWidth = mw;
 
+        // Auto-scale to 1x by default on HiDPI displays. Override with scale=native to keep full resolution.
+        bool autoScale = true;
+        if (request.QueryParams.TryGetValue("scale", out var scaleParam))
+        {
+            autoScale = !scaleParam.Equals("native", StringComparison.OrdinalIgnoreCase)
+                     && !scaleParam.Equals("full", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Resolve the target window and its display density on the UI thread
+        var windowIndex = ParseWindowIndex(request);
+        var density = await DispatchAsync(() =>
+        {
+            var w = GetWindow(windowIndex);
+            return GetWindowDisplayDensity(w);
+        });
+
         // Check for fullscreen mode (captures all windows including dialogs)
         if (request.QueryParams.TryGetValue("fullscreen", out var fs) &&
             fs.Equals("true", StringComparison.OrdinalIgnoreCase))
@@ -559,7 +589,7 @@ public class DevFlowAgentService : IDisposable
             {
                 var pngData = await CaptureFullScreenAsync();
                 if (pngData != null)
-                    return HttpResponse.Png(ResizePngIfNeeded(pngData, maxWidth));
+                    return HttpResponse.Png(ResizePngIfNeeded(pngData, maxWidth, density, autoScale));
                 return HttpResponse.Error("Full-screen capture not supported on this platform");
             }
             catch (Exception ex)
@@ -586,7 +616,7 @@ public class DevFlowAgentService : IDisposable
                 if (pngData == null)
                     return HttpResponse.Error($"Capture returned null for element '{elementId}'");
 
-                return HttpResponse.Png(ResizePngIfNeeded(pngData, maxWidth));
+                return HttpResponse.Png(ResizePngIfNeeded(pngData, maxWidth, density, autoScale));
             }
             catch (Exception ex)
             {
@@ -621,7 +651,7 @@ public class DevFlowAgentService : IDisposable
                 if (pngData == null)
                     return HttpResponse.Error($"Capture returned null for element '{matchId}'");
 
-                return HttpResponse.Png(ResizePngIfNeeded(pngData, maxWidth));
+                return HttpResponse.Png(ResizePngIfNeeded(pngData, maxWidth, density, autoScale));
             }
             catch (FormatException ex)
             {
@@ -635,7 +665,6 @@ public class DevFlowAgentService : IDisposable
 
         try
         {
-            var windowIndex = ParseWindowIndex(request);
             var pngData = await DispatchAsync(async () =>
             {
                 var window = GetWindow(windowIndex);
@@ -677,7 +706,7 @@ public class DevFlowAgentService : IDisposable
             if (pngData == null)
                 return HttpResponse.Error("Failed to capture screenshot");
 
-            return HttpResponse.Png(ResizePngIfNeeded(pngData, maxWidth));
+            return HttpResponse.Png(ResizePngIfNeeded(pngData, maxWidth, density, autoScale));
         }
         catch (Exception ex)
         {
@@ -714,22 +743,36 @@ public class DevFlowAgentService : IDisposable
     }
 
     /// <summary>
-    /// Resizes a PNG image if it exceeds the specified max width, preserving aspect ratio.
-    /// HiDPI displays (2x, 3x) produce screenshots much larger than needed for AI grounding.
+    /// Resizes a PNG image based on display density and/or max width constraint.
+    /// By default, HiDPI screenshots are scaled to 1x logical resolution (e.g., a 3x iPhone
+    /// screenshot of 1290px becomes 430px). An explicit maxWidth overrides density scaling.
     /// </summary>
-    private static byte[] ResizePngIfNeeded(byte[] pngData, int? maxWidth)
+    private static byte[] ResizePngIfNeeded(byte[] pngData, int? maxWidth, double density = 1.0, bool autoScale = true)
     {
-        if (maxWidth == null || maxWidth <= 0) return pngData;
+        // Determine target width: explicit maxWidth takes priority, then auto-scale by density
+        int? targetWidth = maxWidth;
+        if (targetWidth == null && autoScale && density > 1.0)
+        {
+            try
+            {
+                using var probe = SkiaSharp.SKBitmap.Decode(pngData);
+                if (probe != null)
+                    targetWidth = (int)(probe.Width / density);
+            }
+            catch { return pngData; }
+        }
+
+        if (targetWidth == null || targetWidth <= 0) return pngData;
 
         try
         {
             using var original = SkiaSharp.SKBitmap.Decode(pngData);
-            if (original == null || original.Width <= maxWidth.Value) return pngData;
+            if (original == null || original.Width <= targetWidth.Value) return pngData;
 
-            var scale = (float)maxWidth.Value / original.Width;
+            var scale = (float)targetWidth.Value / original.Width;
             var newHeight = (int)(original.Height * scale);
 
-            using var resized = original.Resize(new SkiaSharp.SKImageInfo(maxWidth.Value, newHeight), SkiaSharp.SKFilterQuality.Medium);
+            using var resized = original.Resize(new SkiaSharp.SKImageInfo(targetWidth.Value, newHeight), SkiaSharp.SKFilterQuality.Medium);
             if (resized == null) return pngData;
 
             using var image = SkiaSharp.SKImage.FromBitmap(resized);
@@ -738,7 +781,6 @@ public class DevFlowAgentService : IDisposable
         }
         catch
         {
-            // If resize fails for any reason, return original unchanged
             return pngData;
         }
     }
