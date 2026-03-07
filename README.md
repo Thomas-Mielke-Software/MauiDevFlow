@@ -75,11 +75,12 @@ var builder = MauiApp.CreateBuilder();
 #if DEBUG
 builder.Services.AddBlazorWebViewDeveloperTools();
 builder.AddMauiDevFlowAgent();
+// Or use builder.AddMauiDevFlowProfiling() to enable profiler endpoints by default
 builder.AddMauiBlazorDevFlowTools(); // Blazor Hybrid only
 #endif
 ```
 
-**Agent options:** `Port` (default 9223), `Enabled` (default true), `MaxTreeDepth` (0 = unlimited). Port is also configurable via `.mauidevflow` or `-p:MauiDevFlowPort=XXXX`.
+**Agent options:** `Port` (default 9223), `Enabled` (default true), `MaxTreeDepth` (0 = unlimited), `EnableProfiler` (default false), `ProfilerSampleIntervalMs` (default 500), `MaxProfilerSamples` (default 20000), `MaxProfilerMarkers` (default 20000). Port is also configurable via `.mauidevflow` or `-p:MauiDevFlowPort=XXXX`.
 
 **Blazor options:** `Enabled` (default true), `EnableWebViewInspection` (default true), `EnableLogging` (default true in DEBUG). CDP commands are routed through the agent port — no separate Blazor port needed.
 
@@ -282,6 +283,11 @@ auto-assigned by the broker (range 10223–10899), or configurable via `.mauidev
 | `/api/cdp` | POST | Forward CDP command to Blazor WebView. Use `?webview=<id>` to target a specific WebView |
 | `/api/cdp/webviews` | GET | List registered CDP WebViews (index, AutomationId, elementId, ready status) |
 | `/api/cdp/source` | GET | Get page HTML source. Use `?webview=<id>` to target a specific WebView |
+| `/api/profiler/capabilities` | GET | Profiling capability matrix and availability (DEBUG + feature flag) |
+| `/api/profiler/start` | POST | Start profiling session. Optional body: `{"sampleIntervalMs":500}` |
+| `/api/profiler/stop` | POST | Stop active profiling session |
+| `/api/profiler/samples?sampleCursor=S&markerCursor=M&limit=N` | GET | Poll sample + marker batch since cursors |
+| `/api/profiler/marker` | POST | Publish manual marker `{"type":"user.action","name":"...","payloadJson":"..."}` |
 
 ## Project Structure
 

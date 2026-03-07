@@ -13,6 +13,17 @@ namespace MauiDevFlow.Agent.Gtk;
 public static class GtkAgentServiceExtensions
 {
     /// <summary>
+    /// Registers the MauiDevFlow GTK agent with profiling enabled.
+    /// This is a convenience wrapper over <see cref="AddMauiDevFlowAgent"/>.
+    /// </summary>
+    public static MauiAppBuilder AddMauiDevFlowProfiling(this MauiAppBuilder builder, Action<AgentOptions>? configure = null)
+        => builder.AddMauiDevFlowAgent(options =>
+        {
+            options.EnableProfiler = true;
+            configure?.Invoke(options);
+        });
+
+    /// <summary>
     /// Adds the MauiDevFlow Agent to a Maui.Gtk app builder.
     /// The agent will start automatically when the first GTK window is created.
     /// </summary>

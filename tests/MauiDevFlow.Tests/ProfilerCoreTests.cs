@@ -1,0 +1,115 @@
+using System.Text.Json;
+using MauiDevFlow.Agent.Core.Profiling;
+
+namespace MauiDevFlow.Tests;
+
+public class ProfilerCoreTests
+{
+    [Fact]
+    public void ProfilerBatch_SerializesAndDeserializes()
+    {
+        var now = DateTime.UtcNow;
+        var batch = new ProfilerBatch
+        {
+            SessionId = "session-1",
+            IsActive = true,
+            SampleCursor = 2,
+            MarkerCursor = 3,
+            Samples = new()
+            {
+                new ProfilerSample
+                {
+                    TsUtc = now,
+                    Fps = 59.9,
+                    FrameTimeMsP50 = 16.67,
+                    FrameTimeMsP95 = 22.4,
+                    ManagedBytes = 123_456,
+                    Gc0 = 10,
+                    Gc1 = 4,
+                    Gc2 = 1,
+                    CpuPercent = 33.2,
+                    ThreadCount = 14,
+                    FrameQuality = "estimated"
+                }
+            },
+            Markers = new()
+            {
+                new ProfilerMarker
+                {
+                    TsUtc = now,
+                    Type = "navigation.start",
+                    Name = "//native",
+                    PayloadJson = """{"route":"//native"}"""
+                }
+            }
+        };
+
+        var json = JsonSerializer.Serialize(batch);
+        var parsed = JsonSerializer.Deserialize<ProfilerBatch>(json);
+
+        Assert.NotNull(parsed);
+        Assert.Equal("session-1", parsed.SessionId);
+        Assert.True(parsed.IsActive);
+        Assert.Single(parsed.Samples);
+        Assert.Single(parsed.Markers);
+        Assert.Equal("navigation.start", parsed.Markers[0].Type);
+        Assert.Equal(123_456, parsed.Samples[0].ManagedBytes);
+    }
+
+    [Fact]
+    public void ProfilerRingBuffer_OverwritesOldestWhenCapacityReached()
+    {
+        var ring = new ProfilerRingBuffer<ProfilerMarker>(3);
+        ring.Add(new ProfilerMarker { Name = "m1", Type = "t", TsUtc = DateTime.UtcNow });
+        ring.Add(new ProfilerMarker { Name = "m2", Type = "t", TsUtc = DateTime.UtcNow.AddMilliseconds(1) });
+        ring.Add(new ProfilerMarker { Name = "m3", Type = "t", TsUtc = DateTime.UtcNow.AddMilliseconds(2) });
+        ring.Add(new ProfilerMarker { Name = "m4", Type = "t", TsUtc = DateTime.UtcNow.AddMilliseconds(3) });
+
+        var items = ring.ReadAfter(0, 10, out var latestCursor);
+
+        Assert.Equal(4, latestCursor);
+        Assert.Equal(3, items.Count);
+        Assert.Equal("m2", items[0].Name);
+        Assert.Equal("m3", items[1].Name);
+        Assert.Equal("m4", items[2].Name);
+    }
+
+    [Fact]
+    public void ProfilerSessionStore_EnforcesMonotonicMarkerTimestamps()
+    {
+        var store = new ProfilerSessionStore(100, 100);
+        store.Start(500);
+
+        var now = DateTime.UtcNow;
+        store.AddMarker(new ProfilerMarker { TsUtc = now, Type = "user.action", Name = "first" });
+        store.AddMarker(new ProfilerMarker { TsUtc = now.AddMilliseconds(-100), Type = "user.action", Name = "second" });
+
+        var batch = store.GetBatch(sampleCursor: 0, markerCursor: 0, limit: 100);
+
+        Assert.Equal(2, batch.Markers.Count);
+        Assert.True(batch.Markers[1].TsUtc > batch.Markers[0].TsUtc);
+        Assert.Equal("second", batch.Markers[1].Name);
+    }
+
+    [Fact]
+    public void RuntimeProfilerCollector_CollectsRuntimeMetrics()
+    {
+        var collector = new RuntimeProfilerCollector();
+        collector.Start(100);
+        Thread.Sleep(120);
+
+        var first = collector.TryCollect(out var sample1);
+        Thread.Sleep(120);
+        var second = collector.TryCollect(out var sample2);
+        collector.Stop();
+
+        Assert.True(first);
+        Assert.True(second);
+        Assert.True(sample1.ManagedBytes >= 0);
+        Assert.True(sample1.Gc0 >= 0);
+        Assert.StartsWith("estimated", sample1.FrameQuality);
+        Assert.True(sample1.Fps >= 30);
+        Assert.True(sample1.FrameTimeMsP95 <= 33.5);
+        Assert.True(sample2.TsUtc > sample1.TsUtc);
+    }
+}

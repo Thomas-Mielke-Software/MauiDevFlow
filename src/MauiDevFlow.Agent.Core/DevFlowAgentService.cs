@@ -4,6 +4,7 @@ using Microsoft.Maui;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Controls.Internals;
 using Microsoft.Maui.Dispatching;
+using MauiDevFlow.Agent.Core.Profiling;
 using MauiDevFlow.Logging;
 using MauiDevFlow.Agent.Core.Network;
 
@@ -13,7 +14,7 @@ namespace MauiDevFlow.Agent.Core;
 /// The main agent service that hosts the HTTP API and coordinates
 /// visual tree inspection and element interactions.
 /// </summary>
-public class DevFlowAgentService : IDisposable
+public class DevFlowAgentService : IDisposable, IMarkerPublisher
 {
     private readonly AgentOptions _options;
     private readonly AgentHttpServer _server;
@@ -28,6 +29,12 @@ public class DevFlowAgentService : IDisposable
     /// The network request store for capturing HTTP traffic.
     /// </summary>
     public NetworkRequestStore NetworkStore { get; }
+
+    private readonly IProfilerCollector _profilerCollector;
+    private readonly ProfilerSessionStore _profilerSessions;
+    private readonly SemaphoreSlim _profilerStateGate = new(1, 1);
+    private CancellationTokenSource? _profilerLoopCts;
+    private Task? _profilerLoopTask;
 
     /// <summary>
     /// Delegate for sending CDP commands to the Blazor WebView.
@@ -135,8 +142,13 @@ public class DevFlowAgentService : IDisposable
         _server = new AgentHttpServer(_options.Port);
         _treeWalker = CreateTreeWalker();
         NetworkStore = new NetworkRequestStore(_options.MaxNetworkBufferSize);
+        _profilerCollector = CreateProfilerCollector();
+        _profilerSessions = new ProfilerSessionStore(
+            Math.Max(1, _options.MaxProfilerSamples),
+            Math.Max(1, _options.MaxProfilerMarkers));
         if (_options.EnableNetworkMonitoring)
             DevFlowHttp.SetStore(NetworkStore);
+        NetworkStore.OnRequestCaptured += HandleCapturedNetworkRequest;
         RegisterRoutes();
     }
 
@@ -168,6 +180,12 @@ public class DevFlowAgentService : IDisposable
     /// </summary>
     protected virtual VisualTreeWalker CreateTreeWalker() => new VisualTreeWalker();
 
+    /// <summary>
+    /// Creates the profiler collector. Override in platform-specific subclasses
+    /// to provide native frame/CPU integrations.
+    /// </summary>
+    protected virtual IProfilerCollector CreateProfilerCollector() => new RuntimeProfilerCollector();
+
     /// <summary>Platform name for status reporting. Override for platforms without DeviceInfo.</summary>
     protected virtual string PlatformName => DeviceInfo.Current.Platform.ToString();
 
@@ -192,6 +210,20 @@ public class DevFlowAgentService : IDisposable
 
     /// <summary>Gets native window dimensions when MAUI reports 0. Override for platform-specific access.</summary>
     protected virtual (double width, double height) GetNativeWindowSize(IWindow window) => (0, 0);
+
+    protected virtual bool IsProfilerSupportedInBuild
+    {
+        get
+        {
+#if DEBUG
+            return true;
+#else
+            return false;
+#endif
+        }
+    }
+
+    private bool IsProfilerFeatureAvailable => _options.EnableProfiler && IsProfilerSupportedInBuild;
 
     /// <summary>
     /// Sets the file log provider for serving logs via the API.
@@ -243,6 +275,7 @@ public class DevFlowAgentService : IDisposable
 
     public async Task StopAsync()
     {
+        await StopProfilerAsync();
         await _server.StopAsync();
     }
 
@@ -267,6 +300,11 @@ public class DevFlowAgentService : IDisposable
         _server.MapPost("/api/cdp", HandleCdp);
         _server.MapGet("/api/cdp/webviews", HandleCdpWebViews);
         _server.MapGet("/api/cdp/source", HandleCdpSource);
+        _server.MapGet("/api/profiler/capabilities", HandleProfilerCapabilities);
+        _server.MapPost("/api/profiler/start", HandleProfilerStart);
+        _server.MapPost("/api/profiler/stop", HandleProfilerStop);
+        _server.MapGet("/api/profiler/samples", HandleProfilerSamples);
+        _server.MapPost("/api/profiler/marker", HandleProfilerMarker);
 
         // Network monitoring
         _server.MapGet("/api/network", HandleNetworkList);
@@ -312,7 +350,9 @@ public class DevFlowAgentService : IDisposable
                 cdpWebViewCount = _cdpWebViews.Count,
                 windowCount = _app?.Windows.Count ?? 0,
                 windowWidth = double.IsFinite(w) ? w : 0,
-                windowHeight = double.IsFinite(h) ? h : 0
+                windowHeight = double.IsFinite(h) ? h : 0,
+                profiler = BuildProfilerCapabilitiesPayload(),
+                profilerSession = _profilerSessions.CurrentSession
             };
         });
 
@@ -1231,6 +1271,14 @@ public class DevFlowAgentService : IDisposable
         if (string.IsNullOrEmpty(body?.Route))
             return HttpResponse.Error("route is required");
 
+        Publish(new ProfilerMarker
+        {
+            TsUtc = DateTime.UtcNow,
+            Type = "navigation.start",
+            Name = body.Route,
+            PayloadJson = JsonSerializer.Serialize(new { route = body.Route })
+        });
+
         var result = await DispatchAsync(async () =>
         {
             try
@@ -1246,6 +1294,14 @@ public class DevFlowAgentService : IDisposable
             {
                 return ex.Message;
             }
+        });
+
+        Publish(new ProfilerMarker
+        {
+            TsUtc = DateTime.UtcNow,
+            Type = "navigation.end",
+            Name = body.Route,
+            PayloadJson = JsonSerializer.Serialize(new { route = body.Route, success = result == "ok", error = result == "ok" ? null : result })
         });
 
         return result == "ok" ? HttpResponse.Ok($"Navigated to {body.Route}") : HttpResponse.Error(result ?? "Navigation failed");
@@ -1572,10 +1628,216 @@ public class DevFlowAgentService : IDisposable
         return await tcs.Task;
     }
 
+    private object BuildProfilerCapabilitiesPayload()
+    {
+        var capabilities = _profilerCollector.GetCapabilities();
+        return new
+        {
+            available = IsProfilerFeatureAvailable,
+            supportedInBuild = IsProfilerSupportedInBuild,
+            featureEnabled = _options.EnableProfiler,
+            platform = capabilities.Platform,
+            managedMemorySupported = capabilities.ManagedMemorySupported,
+            gcSupported = capabilities.GcSupported,
+            cpuPercentSupported = capabilities.CpuPercentSupported,
+            fpsSupported = capabilities.FpsSupported,
+            frameTimingsEstimated = capabilities.FrameTimingsEstimated,
+            threadCountSupported = capabilities.ThreadCountSupported
+        };
+    }
+
+    private Task<HttpResponse> HandleProfilerCapabilities(HttpRequest request)
+        => Task.FromResult(HttpResponse.Json(BuildProfilerCapabilitiesPayload()));
+
+    private async Task<HttpResponse> HandleProfilerStart(HttpRequest request)
+    {
+        if (!IsProfilerSupportedInBuild)
+            return HttpResponse.Error("Profiler is only available in DEBUG builds");
+        if (!_options.EnableProfiler)
+            return HttpResponse.Error("Profiler is disabled. Set AgentOptions.EnableProfiler=true");
+
+        var body = request.BodyAs<StartProfilerRequest>();
+        var intervalMs = body?.SampleIntervalMs ?? _options.ProfilerSampleIntervalMs;
+        if (intervalMs < 50 || intervalMs > 60_000)
+            return HttpResponse.Error("sampleIntervalMs must be between 50 and 60000");
+
+        var session = await StartProfilerAsync(intervalMs);
+        return HttpResponse.Json(new { session, capabilities = BuildProfilerCapabilitiesPayload() });
+    }
+
+    private async Task<HttpResponse> HandleProfilerStop(HttpRequest request)
+    {
+        var session = await StopProfilerAsync();
+        return HttpResponse.Json(new { session, stoppedAtUtc = DateTime.UtcNow });
+    }
+
+    private Task<HttpResponse> HandleProfilerSamples(HttpRequest request)
+    {
+        if (!long.TryParse(request.QueryParams.GetValueOrDefault("sampleCursor", "0"), out var sampleCursor))
+            sampleCursor = 0;
+        if (!long.TryParse(request.QueryParams.GetValueOrDefault("markerCursor", "0"), out var markerCursor))
+            markerCursor = 0;
+        if (!int.TryParse(request.QueryParams.GetValueOrDefault("limit", "500"), out var limit))
+            limit = 500;
+
+        limit = Math.Clamp(limit, 1, 5000);
+        var batch = _profilerSessions.GetBatch(sampleCursor, markerCursor, limit);
+        return Task.FromResult(HttpResponse.Json(batch));
+    }
+
+    private Task<HttpResponse> HandleProfilerMarker(HttpRequest request)
+    {
+        if (!IsProfilerFeatureAvailable)
+            return Task.FromResult<HttpResponse>(HttpResponse.Error("Profiler is not available"));
+
+        var body = request.BodyAs<PublishProfilerMarkerRequest>();
+        if (string.IsNullOrWhiteSpace(body?.Name))
+            return Task.FromResult(HttpResponse.Error("name is required"));
+
+        var marker = new ProfilerMarker
+        {
+            TsUtc = DateTime.UtcNow,
+            Type = string.IsNullOrWhiteSpace(body.Type) ? "user.action" : body.Type!,
+            Name = body.Name!,
+            PayloadJson = body.PayloadJson
+        };
+
+        Publish(marker);
+        return Task.FromResult(HttpResponse.Ok("Marker published"));
+    }
+
+    private async Task<ProfilerSessionInfo> StartProfilerAsync(int intervalMs)
+    {
+        await _profilerStateGate.WaitAsync();
+        try
+        {
+            var current = _profilerSessions.CurrentSession;
+            if (current?.IsActive == true)
+                return current;
+
+            _profilerCollector.Start(intervalMs);
+            var session = _profilerSessions.Start(intervalMs);
+            _profilerLoopCts = new CancellationTokenSource();
+            _profilerLoopTask = Task.Run(() => RunProfilerLoopAsync(intervalMs, _profilerLoopCts.Token));
+            return session;
+        }
+        finally
+        {
+            _profilerStateGate.Release();
+        }
+    }
+
+    private async Task<ProfilerSessionInfo?> StopProfilerAsync()
+    {
+        await _profilerStateGate.WaitAsync();
+        try
+        {
+            var cts = _profilerLoopCts;
+            var loopTask = _profilerLoopTask;
+            _profilerLoopCts = null;
+            _profilerLoopTask = null;
+
+            if (cts != null)
+            {
+                cts.Cancel();
+                cts.Dispose();
+            }
+
+            if (loopTask != null)
+            {
+                try
+                {
+                    await loopTask;
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            }
+
+            _profilerCollector.Stop();
+            return _profilerSessions.Stop();
+        }
+        finally
+        {
+            _profilerStateGate.Release();
+        }
+    }
+
+    private async Task RunProfilerLoopAsync(int intervalMs, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            if (_profilerCollector.TryCollect(out var sample))
+                _profilerSessions.AddSample(sample);
+
+            await Task.Delay(intervalMs, ct);
+        }
+    }
+
+    public void Publish(ProfilerMarker marker)
+    {
+        if (!IsProfilerFeatureAvailable || !_profilerSessions.IsActive)
+            return;
+
+        if (marker.TsUtc == default)
+            marker.TsUtc = DateTime.UtcNow;
+        if (string.IsNullOrWhiteSpace(marker.Type))
+            marker.Type = "user.action";
+        if (string.IsNullOrWhiteSpace(marker.Name))
+            marker.Name = marker.Type;
+
+        _profilerSessions.AddMarker(marker);
+    }
+
+    private void HandleCapturedNetworkRequest(NetworkRequestEntry entry)
+    {
+        if (!IsProfilerFeatureAvailable || !_profilerSessions.IsActive)
+            return;
+
+        var endTimestampUtc = entry.Timestamp.UtcDateTime;
+        var startTimestampUtc = endTimestampUtc - TimeSpan.FromMilliseconds(Math.Max(0, entry.DurationMs));
+        var markerName = $"{entry.Method} {entry.Path ?? entry.Url}";
+
+        Publish(new ProfilerMarker
+        {
+            TsUtc = startTimestampUtc,
+            Type = "network.request.start",
+            Name = markerName,
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                id = entry.Id,
+                method = entry.Method,
+                url = entry.Url,
+                host = entry.Host
+            })
+        });
+
+        Publish(new ProfilerMarker
+        {
+            TsUtc = endTimestampUtc,
+            Type = "network.request.end",
+            Name = markerName,
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                id = entry.Id,
+                method = entry.Method,
+                url = entry.Url,
+                statusCode = entry.StatusCode,
+                durationMs = entry.DurationMs,
+                error = entry.Error
+            })
+        });
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        NetworkStore.OnRequestCaptured -= HandleCapturedNetworkRequest;
+        _profilerLoopCts?.Cancel();
+        _profilerLoopCts?.Dispose();
+        _profilerCollector.Stop();
+        _profilerStateGate.Dispose();
         _brokerRegistration?.Dispose();
         _server.Dispose();
         _logProvider?.Dispose();

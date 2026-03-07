@@ -16,6 +16,17 @@ namespace MauiDevFlow.Agent;
 public static class AgentServiceExtensions
 {
     /// <summary>
+    /// Registers the MauiDevFlow Agent with profiling enabled.
+    /// This is a convenience wrapper over <see cref="AddMauiDevFlowAgent"/>.
+    /// </summary>
+    public static MauiAppBuilder AddMauiDevFlowProfiling(this MauiAppBuilder builder, Action<AgentOptions>? configure = null)
+        => builder.AddMauiDevFlowAgent(options =>
+        {
+            options.EnableProfiler = true;
+            configure?.Invoke(options);
+        });
+
+    /// <summary>
     /// Adds the MauiDevFlow Agent to the MAUI app builder.
     /// The agent will start automatically when the app starts.
     /// </summary>

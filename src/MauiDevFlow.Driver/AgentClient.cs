@@ -203,6 +203,43 @@ public class AgentClient : IDisposable
         return await _http.GetStringAsync($"{_baseUrl}{path}");
     }
 
+    public async Task<ProfilerCapabilities?> GetProfilerCapabilitiesAsync()
+    {
+        return await GetAsync<ProfilerCapabilities>("/api/profiler/capabilities");
+    }
+
+    public async Task<ProfilerSessionInfo?> StartProfilerAsync(int? sampleIntervalMs = null)
+    {
+        object payload = sampleIntervalMs.HasValue
+            ? new { sampleIntervalMs = sampleIntervalMs.Value }
+            : new { };
+        var response = await PostJsonAsync<ProfilerSessionEnvelope>("/api/profiler/start", payload);
+        return response?.Session;
+    }
+
+    public async Task<ProfilerSessionInfo?> StopProfilerAsync()
+    {
+        var response = await PostJsonAsync<ProfilerSessionEnvelope>("/api/profiler/stop", new { });
+        return response?.Session;
+    }
+
+    public async Task<ProfilerBatch?> GetProfilerSamplesAsync(
+        long sampleCursor = 0,
+        long markerCursor = 0,
+        int limit = 500)
+    {
+        var url = $"/api/profiler/samples?sampleCursor={sampleCursor}&markerCursor={markerCursor}&limit={limit}";
+        return await GetAsync<ProfilerBatch>(url);
+    }
+
+    public async Task<bool> PublishProfilerMarkerAsync(
+        string name,
+        string type = "user.action",
+        string? payloadJson = null)
+    {
+        return await PostActionAsync("/api/profiler/marker", new { name, type, payloadJson });
+    }
+
     private async Task<T?> GetAsync<T>(string path) where T : class
     {
         try
@@ -237,6 +274,24 @@ public class AgentClient : IDisposable
             return result.TryGetProperty("success", out var success) && success.GetBoolean();
         }
         catch { return false; }
+    }
+
+    private async Task<T?> PostJsonAsync<T>(string path, object body) where T : class
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(body);
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var response = await _http.PostAsync($"{_baseUrl}{path}", content);
+            if (!response.IsSuccessStatusCode)
+                return null;
+            var responseBody = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<T>(responseBody);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     public void Dispose()
@@ -285,6 +340,12 @@ public class AgentClient : IDisposable
     {
         var wsBase = _baseUrl.Replace("http://", "ws://").Replace("https://", "wss://");
         return $"{wsBase}/ws/network";
+    }
+
+    private sealed class ProfilerSessionEnvelope
+    {
+        [System.Text.Json.Serialization.JsonPropertyName("session")]
+        public ProfilerSessionInfo? Session { get; set; }
     }
 }
 
@@ -352,4 +413,94 @@ public class NetworkRequest
     public bool RequestBodyTruncated { get; set; }
     [System.Text.Json.Serialization.JsonPropertyName("responseBodyTruncated")]
     public bool ResponseBodyTruncated { get; set; }
+}
+
+public class ProfilerSessionInfo
+{
+    [System.Text.Json.Serialization.JsonPropertyName("sessionId")]
+    public string SessionId { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("startedAtUtc")]
+    public DateTime StartedAtUtc { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("sampleIntervalMs")]
+    public int SampleIntervalMs { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("isActive")]
+    public bool IsActive { get; set; }
+}
+
+public class ProfilerSample
+{
+    [System.Text.Json.Serialization.JsonPropertyName("tsUtc")]
+    public DateTime TsUtc { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("fps")]
+    public double? Fps { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("frameTimeMsP50")]
+    public double? FrameTimeMsP50 { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("frameTimeMsP95")]
+    public double? FrameTimeMsP95 { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("managedBytes")]
+    public long ManagedBytes { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("gc0")]
+    public int Gc0 { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("gc1")]
+    public int Gc1 { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("gc2")]
+    public int Gc2 { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("cpuPercent")]
+    public double? CpuPercent { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("threadCount")]
+    public int? ThreadCount { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("frameQuality")]
+    public string FrameQuality { get; set; } = "";
+}
+
+public class ProfilerMarker
+{
+    [System.Text.Json.Serialization.JsonPropertyName("tsUtc")]
+    public DateTime TsUtc { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("type")]
+    public string Type { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("payloadJson")]
+    public string? PayloadJson { get; set; }
+}
+
+public class ProfilerBatch
+{
+    [System.Text.Json.Serialization.JsonPropertyName("sessionId")]
+    public string SessionId { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("samples")]
+    public List<ProfilerSample> Samples { get; set; } = new();
+    [System.Text.Json.Serialization.JsonPropertyName("markers")]
+    public List<ProfilerMarker> Markers { get; set; } = new();
+    [System.Text.Json.Serialization.JsonPropertyName("sampleCursor")]
+    public long SampleCursor { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("markerCursor")]
+    public long MarkerCursor { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("isActive")]
+    public bool IsActive { get; set; }
+}
+
+public class ProfilerCapabilities
+{
+    [System.Text.Json.Serialization.JsonPropertyName("available")]
+    public bool Available { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("supportedInBuild")]
+    public bool SupportedInBuild { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("featureEnabled")]
+    public bool FeatureEnabled { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("platform")]
+    public string Platform { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("managedMemorySupported")]
+    public bool ManagedMemorySupported { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("gcSupported")]
+    public bool GcSupported { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("cpuPercentSupported")]
+    public bool CpuPercentSupported { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("fpsSupported")]
+    public bool FpsSupported { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("frameTimingsEstimated")]
+    public bool FrameTimingsEstimated { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("threadCountSupported")]
+    public bool ThreadCountSupported { get; set; }
 }
