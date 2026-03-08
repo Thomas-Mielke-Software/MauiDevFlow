@@ -3,7 +3,7 @@ using Microsoft.Maui.Devices;
 
 namespace MauiDevFlow.Agent.Core.Profiling;
 
-public class RuntimeProfilerCollector : IProfilerCollector
+public class RuntimeProfilerCollector : IProfilerCollector, IDisposable
 {
     private readonly Process _process = Process.GetCurrentProcess();
     private readonly INativeFrameStatsProvider? _nativeFrameStatsProvider;
@@ -344,5 +344,11 @@ public class RuntimeProfilerCollector : IProfilerCollector
         if (OperatingSystem.IsWindows()) return "Windows";
         if (OperatingSystem.IsLinux()) return "Linux";
         return "Unknown";
+    }
+
+    public void Dispose()
+    {
+        Stop();
+        _nativeFrameStatsProvider?.Dispose();
     }
 }

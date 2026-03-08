@@ -140,21 +140,27 @@ internal sealed class AndroidFrameMetricsStatsProvider : Java.Lang.Object, INati
         if (!IsSupported)
             throw new PlatformNotSupportedException("FrameMetrics requires Android API 24+.");
 
-        _running = true;
         MainThread.BeginInvokeOnMainThread(() =>
         {
-            var activity = Platform.CurrentActivity;
-            var window = activity?.Window;
-            if (window == null)
-                throw new InvalidOperationException("Unable to access current Android window for frame metrics.");
+            try
+            {
+                var activity = Platform.CurrentActivity;
+                var window = activity?.Window;
+                if (window == null)
+                    return;
 
-            var looper = Looper.MyLooper() ?? Looper.MainLooper;
-            if (looper == null)
-                throw new InvalidOperationException("Unable to obtain Android looper for frame metrics listener.");
+                var looper = Looper.MyLooper() ?? Looper.MainLooper;
+                if (looper == null)
+                    return;
 
-            _frameMetricsHandler ??= new Handler(looper);
-            _windowRef = new WeakReference<Android.Views.Window>(window);
-            window.AddOnFrameMetricsAvailableListener(this, _frameMetricsHandler);
+                _frameMetricsHandler ??= new Handler(looper);
+                _windowRef = new WeakReference<Android.Views.Window>(window);
+                window.AddOnFrameMetricsAvailableListener(this, _frameMetricsHandler);
+                _running = true;
+            }
+            catch
+            {
+            }
         });
     }
 
@@ -246,9 +252,18 @@ internal sealed class AndroidChoreographerFrameStatsProvider : Java.Lang.Object,
         if (_running)
             return;
 
-        _running = true;
         _lastFrameTimeNanos = 0;
-        MainThread.BeginInvokeOnMainThread(() => Choreographer.Instance.PostFrameCallback(this));
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            try
+            {
+                Choreographer.Instance.PostFrameCallback(this);
+                _running = true;
+            }
+            catch
+            {
+            }
+        });
     }
 
     public void Stop()
@@ -339,12 +354,18 @@ internal sealed class AppleDisplayLinkFrameStatsProvider : INativeFrameStatsProv
         if (_running)
             return;
 
-        _running = true;
         _lastTimestampSeconds = 0d;
         MainThread.BeginInvokeOnMainThread(() =>
         {
-            _displayLink = CADisplayLink.Create(OnTick);
-            _displayLink.AddToRunLoop(NSRunLoop.Main, NSRunLoopMode.Common);
+            try
+            {
+                _displayLink = CADisplayLink.Create(OnTick);
+                _displayLink.AddToRunLoop(NSRunLoop.Main, NSRunLoopMode.Common);
+                _running = true;
+            }
+            catch
+            {
+            }
         });
     }
 
@@ -480,9 +501,18 @@ internal sealed class WindowsCompositionFrameStatsProvider : INativeFrameStatsPr
         if (_running)
             return;
 
-        _running = true;
         _lastRenderingTime = null;
-        MainThread.BeginInvokeOnMainThread(() => CompositionTarget.Rendering += OnRendering);
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            try
+            {
+                CompositionTarget.Rendering += OnRendering;
+                _running = true;
+            }
+            catch
+            {
+            }
+        });
     }
 
     public void Stop()

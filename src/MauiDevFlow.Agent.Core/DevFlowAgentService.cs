@@ -1911,11 +1911,7 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
             _profilerLoopCts = null;
             _profilerLoopTask = null;
 
-            if (cts != null)
-            {
-                cts.Cancel();
-                cts.Dispose();
-            }
+            cts?.Cancel();
 
             if (loopTask != null)
             {
@@ -1928,6 +1924,7 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
                 }
             }
 
+            cts?.Dispose();
             _profilerCollector.Stop();
             StopAutoUiHooks();
             return _profilerSessions.Stop();
@@ -2990,9 +2987,22 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         _disposed = true;
         NetworkStore.OnRequestCaptured -= HandleCapturedNetworkRequest;
         StopAutoUiHooks();
-        _profilerLoopCts?.Cancel();
-        _profilerLoopCts?.Dispose();
+
+        var cts = _profilerLoopCts;
+        var loopTask = _profilerLoopTask;
+        _profilerLoopCts = null;
+        _profilerLoopTask = null;
+
+        cts?.Cancel();
+        if (loopTask != null)
+        {
+            try { loopTask.Wait(TimeSpan.FromSeconds(3)); }
+            catch (AggregateException) { }
+        }
+        cts?.Dispose();
+
         _profilerCollector.Stop();
+        (_profilerCollector as IDisposable)?.Dispose();
         _profilerStateGate.Dispose();
         _brokerRegistration?.Dispose();
         _server.Dispose();
