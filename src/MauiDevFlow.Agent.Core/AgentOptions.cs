@@ -75,4 +75,44 @@ public class AgentOptions
     /// Maximum number of network requests to keep in the ring buffer. Default: 500.
     /// </summary>
     public int MaxNetworkBufferSize { get; set; } = 500;
+
+    /// <summary>
+    /// Enables runtime profiling endpoints and sampling. Default: false.
+    /// </summary>
+    public bool EnableProfiler { get; set; } = false;
+
+    /// <summary>
+    /// Default profiler sampling interval in milliseconds. Default: 500ms.
+    /// </summary>
+    public int ProfilerSampleIntervalMs { get; set; } = 500;
+
+    /// <summary>
+    /// Maximum number of profiler samples to keep in memory. Default: 20,000.
+    /// Uses overwrite-on-full ring buffer behavior.
+    /// </summary>
+    public int MaxProfilerSamples { get; set; } = 20_000;
+
+    /// <summary>
+    /// Maximum number of profiler markers to keep in memory. Default: 20,000.
+    /// Uses overwrite-on-full ring buffer behavior.
+    /// </summary>
+    public int MaxProfilerMarkers { get; set; } = 20_000;
+
+    /// <summary>
+    /// Maximum number of profiler spans to keep in memory. Default: 20,000.
+    /// Uses overwrite-on-full ring buffer behavior.
+    /// </summary>
+    public int MaxProfilerSpans { get; set; } = 20_000;
+
+    /// <summary>
+    /// Enables high-level MAUI UI correlation hooks (navigation/page/scroll markers).
+    /// Default: true.
+    /// </summary>
+    public bool EnableHighLevelUiHooks { get; set; } = true;
+
+    /// <summary>
+    /// Enables detailed per-control MAUI hooks (button/entry/toggle/picker/tap).
+    /// Default: false to avoid broad attachment overhead.
+    /// </summary>
+    public bool EnableDetailedUiHooks { get; set; } = false;
 }

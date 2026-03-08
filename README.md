@@ -79,7 +79,9 @@ builder.AddMauiBlazorDevFlowTools(); // Blazor Hybrid only
 #endif
 ```
 
-**Agent options:** `Port` (default 9223), `Enabled` (default true), `MaxTreeDepth` (0 = unlimited). Port is also configurable via `.mauidevflow` or `-p:MauiDevFlowPort=XXXX`.
+**Agent options:** `Port` (default 9223), `Enabled` (default true), `MaxTreeDepth` (0 = unlimited), `EnableProfiler` (default false), `ProfilerSampleIntervalMs` (default 500), `MaxProfilerSamples` (default 20000), `MaxProfilerMarkers` (default 20000), `MaxProfilerSpans` (default 20000), `EnableHighLevelUiHooks` (default true), `EnableDetailedUiHooks` (default false). Port is also configurable via `.mauidevflow` or `-p:MauiDevFlowPort=XXXX`.
+
+With `EnableProfiler=true`, the agent uses native frame pipelines where available (Android `FrameMetrics` on API 24+, Android `Choreographer` fallback, Apple `CADisplayLink`, Windows `CompositionTarget.Rendering`) and emits frame/jank/stall signals (`frameSource`, `jankFrameCount`, `uiThreadStallCount`). Android `FrameMetrics` is treated as exact native timing; cadence-based providers (Apple/Windows/Android fallback) are reported with non-exact frame quality so consumers can distinguish confidence levels. High-level UI milestones (navigation/page/scroll) are enabled by default; per-control hooks are optional via `EnableDetailedUiHooks=true` when deep interaction traces are needed.
 
 **Blazor options:** `Enabled` (default true), `EnableWebViewInspection` (default true), `EnableLogging` (default true in DEBUG). CDP commands are routed through the agent port — no separate Blazor port needed.
 
@@ -282,6 +284,13 @@ auto-assigned by the broker (range 10223–10899), or configurable via `.mauidev
 | `/api/cdp` | POST | Forward CDP command to Blazor WebView. Use `?webview=<id>` to target a specific WebView |
 | `/api/cdp/webviews` | GET | List registered CDP WebViews (index, AutomationId, elementId, ready status) |
 | `/api/cdp/source` | GET | Get page HTML source. Use `?webview=<id>` to target a specific WebView |
+| `/api/profiler/capabilities` | GET | Profiling capability matrix and availability (`EnableProfiler`) |
+| `/api/profiler/start` | POST | Start profiling session. Optional body: `{"sampleIntervalMs":500}` |
+| `/api/profiler/stop` | POST | Stop active profiling session |
+| `/api/profiler/samples?sampleCursor=S&markerCursor=M&spanCursor=P&limit=N` | GET | Poll sample + marker + span batch since cursors |
+| `/api/profiler/marker` | POST | Publish manual marker `{"type":"user.action","name":"...","payloadJson":"..."}` |
+| `/api/profiler/span` | POST | Publish manual span `{"kind":"ui.operation","name":"...","startTsUtc":"...","endTsUtc":"..."}` |
+| `/api/profiler/hotspots?kind=ui.operation&minDurationMs=16&limit=20` | GET | Aggregated slow-operation hotspots ordered by P95 duration |
 
 ## Project Structure
 

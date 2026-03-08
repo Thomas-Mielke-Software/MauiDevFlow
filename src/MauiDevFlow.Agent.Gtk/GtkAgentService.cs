@@ -1,6 +1,7 @@
 using Microsoft.Maui;
 using Microsoft.Maui.Controls;
 using MauiDevFlow.Agent.Core;
+using MauiDevFlow.Agent.Core.Profiling;
 
 namespace MauiDevFlow.Agent.Gtk;
 
@@ -12,6 +13,7 @@ public class GtkAgentService : DevFlowAgentService
     public GtkAgentService(AgentOptions? options = null) : base(options) { }
 
     protected override VisualTreeWalker CreateTreeWalker() => new GtkVisualTreeWalker();
+    protected override IProfilerCollector CreateProfilerCollector() => new RuntimeProfilerCollector();
 
     protected override string PlatformName => "Linux";
     protected override string DeviceTypeName => "Virtual";

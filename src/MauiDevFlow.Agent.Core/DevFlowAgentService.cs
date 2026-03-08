@@ -1,9 +1,11 @@
 using System.Text.Json;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Microsoft.Maui;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Controls.Internals;
 using Microsoft.Maui.Dispatching;
+using MauiDevFlow.Agent.Core.Profiling;
 using MauiDevFlow.Logging;
 using MauiDevFlow.Agent.Core.Network;
 
@@ -13,7 +15,7 @@ namespace MauiDevFlow.Agent.Core;
 /// The main agent service that hosts the HTTP API and coordinates
 /// visual tree inspection and element interactions.
 /// </summary>
-public class DevFlowAgentService : IDisposable
+public class DevFlowAgentService : IDisposable, IMarkerPublisher
 {
     private readonly AgentOptions _options;
     private readonly AgentHttpServer _server;
@@ -28,6 +30,70 @@ public class DevFlowAgentService : IDisposable
     /// The network request store for capturing HTTP traffic.
     /// </summary>
     public NetworkRequestStore NetworkStore { get; }
+
+    private readonly IProfilerCollector _profilerCollector;
+    private readonly ProfilerSessionStore _profilerSessions;
+    private readonly SemaphoreSlim _profilerStateGate = new(1, 1);
+    private CancellationTokenSource? _profilerLoopCts;
+    private Task? _profilerLoopTask;
+    private DateTime _lastAutoJankSpanTsUtc = DateTime.MinValue;
+    private const int UiHookScanIntervalMs = 3000;
+    private readonly ConditionalWeakTable<BindableObject, UiHookState> _uiHookStates = new();
+    private readonly List<Action> _uiHookUnsubscribers = new();
+    private readonly object _uiHookGate = new();
+    private int _uiHookGeneration = 1;
+    private int _uiHookScanInFlight;
+    private DateTime _lastUiHookScanTsUtc = DateTime.MinValue;
+    private Shell? _hookedShell;
+    private DateTime? _navigationStartedAtUtc;
+    private string? _navigationTargetRoute;
+    private DateTime _lastUserActionTsUtc = DateTime.MinValue;
+    private string? _lastUserActionName;
+    private string? _lastUserActionElementPath;
+    private readonly ConditionalWeakTable<Page, PageLifecycleState> _pageLifecycleStates = new();
+    private readonly ConditionalWeakTable<VisualElement, ElementRenderState> _elementRenderStates = new();
+    private readonly ConditionalWeakTable<BindableObject, ScrollBatchState> _scrollBatchStates = new();
+
+    private sealed class UiHookState
+    {
+        public int Generation { get; set; }
+        public HashSet<string> HookKeys { get; } = new(StringComparer.Ordinal);
+    }
+
+    private sealed class PageLifecycleState
+    {
+        public DateTime AppearingAtUtc { get; set; }
+        public string? Route { get; set; }
+        public bool FirstLayoutPublished { get; set; }
+        public int SizeChangedCount { get; set; }
+        public int MeasureInvalidatedCount { get; set; }
+    }
+
+    private sealed class ElementRenderState
+    {
+        public DateTime TrackingStartedAtUtc { get; set; }
+        public string? Role { get; set; }
+        public bool FirstLayoutPublished { get; set; }
+        public int SizeChangedCount { get; set; }
+        public int MeasureInvalidatedCount { get; set; }
+    }
+
+    private sealed class ScrollBatchState
+    {
+        public bool IsActive { get; set; }
+        public DateTime StartedAtUtc { get; set; }
+        public DateTime LastEventAtUtc { get; set; }
+        public int EventCount { get; set; }
+        public int FlushVersion { get; set; }
+        public double StartOffsetX { get; set; }
+        public double StartOffsetY { get; set; }
+        public double LastOffsetX { get; set; }
+        public double LastOffsetY { get; set; }
+        public int? StartFirstVisibleIndex { get; set; }
+        public int? StartLastVisibleIndex { get; set; }
+        public int? LastFirstVisibleIndex { get; set; }
+        public int? LastLastVisibleIndex { get; set; }
+    }
 
     /// <summary>
     /// Delegate for sending CDP commands to the Blazor WebView.
@@ -135,8 +201,14 @@ public class DevFlowAgentService : IDisposable
         _server = new AgentHttpServer(_options.Port);
         _treeWalker = CreateTreeWalker();
         NetworkStore = new NetworkRequestStore(_options.MaxNetworkBufferSize);
+        _profilerCollector = CreateProfilerCollector();
+        _profilerSessions = new ProfilerSessionStore(
+            Math.Max(1, _options.MaxProfilerSamples),
+            Math.Max(1, _options.MaxProfilerMarkers),
+            Math.Max(1, _options.MaxProfilerSpans));
         if (_options.EnableNetworkMonitoring)
             DevFlowHttp.SetStore(NetworkStore);
+        NetworkStore.OnRequestCaptured += HandleCapturedNetworkRequest;
         RegisterRoutes();
     }
 
@@ -168,6 +240,12 @@ public class DevFlowAgentService : IDisposable
     /// </summary>
     protected virtual VisualTreeWalker CreateTreeWalker() => new VisualTreeWalker();
 
+    /// <summary>
+    /// Creates the profiler collector. Override in platform-specific subclasses
+    /// to provide native frame/CPU integrations.
+    /// </summary>
+    protected virtual IProfilerCollector CreateProfilerCollector() => new RuntimeProfilerCollector();
+
     /// <summary>Platform name for status reporting. Override for platforms without DeviceInfo.</summary>
     protected virtual string PlatformName => DeviceInfo.Current.Platform.ToString();
 
@@ -192,6 +270,8 @@ public class DevFlowAgentService : IDisposable
 
     /// <summary>Gets native window dimensions when MAUI reports 0. Override for platform-specific access.</summary>
     protected virtual (double width, double height) GetNativeWindowSize(IWindow window) => (0, 0);
+
+    private bool IsProfilerFeatureAvailable => _options.EnableProfiler;
 
     /// <summary>
     /// Sets the file log provider for serving logs via the API.
@@ -243,6 +323,7 @@ public class DevFlowAgentService : IDisposable
 
     public async Task StopAsync()
     {
+        await StopProfilerAsync();
         await _server.StopAsync();
     }
 
@@ -267,6 +348,13 @@ public class DevFlowAgentService : IDisposable
         _server.MapPost("/api/cdp", HandleCdp);
         _server.MapGet("/api/cdp/webviews", HandleCdpWebViews);
         _server.MapGet("/api/cdp/source", HandleCdpSource);
+        _server.MapGet("/api/profiler/capabilities", HandleProfilerCapabilities);
+        _server.MapPost("/api/profiler/start", HandleProfilerStart);
+        _server.MapPost("/api/profiler/stop", HandleProfilerStop);
+        _server.MapGet("/api/profiler/samples", HandleProfilerSamples);
+        _server.MapPost("/api/profiler/marker", HandleProfilerMarker);
+        _server.MapPost("/api/profiler/span", HandleProfilerSpan);
+        _server.MapGet("/api/profiler/hotspots", HandleProfilerHotspots);
 
         // Network monitoring
         _server.MapGet("/api/network", HandleNetworkList);
@@ -312,7 +400,9 @@ public class DevFlowAgentService : IDisposable
                 cdpWebViewCount = _cdpWebViews.Count,
                 windowCount = _app?.Windows.Count ?? 0,
                 windowWidth = double.IsFinite(w) ? w : 0,
-                windowHeight = double.IsFinite(h) ? h : 0
+                windowHeight = double.IsFinite(h) ? h : 0,
+                profiler = BuildProfilerCapabilitiesPayload(),
+                profilerSession = _profilerSessions.CurrentSession
             };
         });
 
@@ -899,6 +989,7 @@ public class DevFlowAgentService : IDisposable
         if (body?.Value == null)
             return HttpResponse.Error("value is required");
 
+        var startedAtUtc = DateTime.UtcNow;
         var result = await DispatchAsync(() =>
         {
             var el = _treeWalker.GetElementById(id, _app);
@@ -920,6 +1011,14 @@ public class DevFlowAgentService : IDisposable
                 return $"Failed to set property: {ex.Message}";
             }
         });
+
+        PublishUiOperationSpan(
+            "action.set-property",
+            startedAtUtc,
+            result == "ok",
+            result == "ok" ? null : result,
+            id,
+            new { property = propName });
 
         return result == "ok"
             ? HttpResponse.Json(new { id, property = propName, value = body.Value })
@@ -997,6 +1096,7 @@ public class DevFlowAgentService : IDisposable
         if (body?.ElementId == null)
             return HttpResponse.Error("elementId is required");
 
+        var startedAtUtc = DateTime.UtcNow;
         var result = await DispatchAsync(() =>
         {
             var el = _treeWalker.GetElementById(body.ElementId, _app);
@@ -1094,6 +1194,13 @@ public class DevFlowAgentService : IDisposable
             }
         });
 
+        PublishUiOperationSpan(
+            "action.tap",
+            startedAtUtc,
+            result == "ok",
+            result == "ok" ? null : result,
+            body.ElementId);
+
         return result == "ok" ? HttpResponse.Ok("Tapped") : HttpResponse.Error(result);
     }
 
@@ -1145,6 +1252,7 @@ public class DevFlowAgentService : IDisposable
         if (body?.ElementId == null || body.Text == null)
             return HttpResponse.Error("elementId and text are required");
 
+        var startedAtUtc = DateTime.UtcNow;
         var result = await DispatchAsync(() =>
         {
             var el = _treeWalker.GetElementById(body.ElementId, _app);
@@ -1169,6 +1277,14 @@ public class DevFlowAgentService : IDisposable
             }
         });
 
+        PublishUiOperationSpan(
+            "action.fill",
+            startedAtUtc,
+            result == "ok",
+            result == "ok" ? null : result,
+            body.ElementId,
+            new { textLength = body.Text.Length });
+
         return result == "ok" ? HttpResponse.Ok("Text set") : HttpResponse.Error(result);
     }
 
@@ -1180,6 +1296,7 @@ public class DevFlowAgentService : IDisposable
         if (body?.ElementId == null)
             return HttpResponse.Error("elementId is required");
 
+        var startedAtUtc = DateTime.UtcNow;
         var success = await DispatchAsync(() =>
         {
             var el = _treeWalker.GetElementById(body.ElementId, _app);
@@ -1201,6 +1318,13 @@ public class DevFlowAgentService : IDisposable
             }
         });
 
+        PublishUiOperationSpan(
+            "action.clear",
+            startedAtUtc,
+            success,
+            success ? null : "Element does not accept text input",
+            body.ElementId);
+
         return success ? HttpResponse.Ok("Cleared") : HttpResponse.Error("Element does not accept text input");
     }
 
@@ -1212,6 +1336,7 @@ public class DevFlowAgentService : IDisposable
         if (body?.ElementId == null)
             return HttpResponse.Error("elementId is required");
 
+        var startedAtUtc = DateTime.UtcNow;
         var success = await DispatchAsync(() =>
         {
             var el = _treeWalker.GetElementById(body.ElementId, _app);
@@ -1219,6 +1344,13 @@ public class DevFlowAgentService : IDisposable
             ve.Focus();
             return true;
         });
+
+        PublishUiOperationSpan(
+            "action.focus",
+            startedAtUtc,
+            success,
+            success ? null : "Cannot focus element",
+            body.ElementId);
 
         return success ? HttpResponse.Ok("Focused") : HttpResponse.Error("Cannot focus element");
     }
@@ -1230,6 +1362,15 @@ public class DevFlowAgentService : IDisposable
         var body = request.BodyAs<NavigateRequest>();
         if (string.IsNullOrEmpty(body?.Route))
             return HttpResponse.Error("route is required");
+
+        var startedAtUtc = DateTime.UtcNow;
+        Publish(new ProfilerMarker
+        {
+            TsUtc = DateTime.UtcNow,
+            Type = "navigation.start",
+            Name = body.Route,
+            PayloadJson = JsonSerializer.Serialize(new { route = body.Route })
+        });
 
         var result = await DispatchAsync(async () =>
         {
@@ -1248,6 +1389,22 @@ public class DevFlowAgentService : IDisposable
             }
         });
 
+        Publish(new ProfilerMarker
+        {
+            TsUtc = DateTime.UtcNow,
+            Type = "navigation.end",
+            Name = body.Route,
+            PayloadJson = JsonSerializer.Serialize(new { route = body.Route, success = result == "ok", error = result == "ok" ? null : result })
+        });
+
+        PublishUiOperationSpan(
+            "action.navigate",
+            startedAtUtc,
+            result == "ok",
+            result == "ok" ? null : result,
+            elementPath: body.Route,
+            tags: new { route = body.Route });
+
         return result == "ok" ? HttpResponse.Ok($"Navigated to {body.Route}") : HttpResponse.Error(result ?? "Navigation failed");
     }
 
@@ -1259,6 +1416,7 @@ public class DevFlowAgentService : IDisposable
         if (body == null || body.Width <= 0 || body.Height <= 0)
             return HttpResponse.Error("width and height are required (positive integers)");
 
+        var startedAtUtc = DateTime.UtcNow;
         var windowIndex = ParseWindowIndex(request);
         var result = await DispatchAsync(() =>
         {
@@ -1277,6 +1435,13 @@ public class DevFlowAgentService : IDisposable
                 return $"Resize failed: {ex.Message}";
             }
         });
+
+        PublishUiOperationSpan(
+            "action.resize",
+            startedAtUtc,
+            result == "ok",
+            result == "ok" ? null : result,
+            tags: new { width = body.Width, height = body.Height, windowIndex });
 
         return result == "ok"
             ? HttpResponse.Json(new { success = true, width = body.Width, height = body.Height })
@@ -1307,7 +1472,7 @@ public class DevFlowAgentService : IDisposable
             return HttpResponse.Error("Request body is required");
 
         var position = ParseScrollToPosition(body.ScrollToPosition);
-
+        var startedAtUtc = DateTime.UtcNow;
         var result = await DispatchAsync(async () =>
         {
             // Priority 1: Scroll by item index on a specific ItemsView
@@ -1435,6 +1600,14 @@ public class DevFlowAgentService : IDisposable
 
             return "No scrollable view found on page";
         });
+
+        PublishUiOperationSpan(
+            "action.scroll",
+            startedAtUtc,
+            result == "ok",
+            result == "ok" ? null : result,
+            body.ElementId,
+            new { body.DeltaX, body.DeltaY, body.Animated });
 
         return result == "ok" ? HttpResponse.Ok("Scrolled") : HttpResponse.Error(result ?? "Scroll failed");
     }
@@ -1572,10 +1745,1265 @@ public class DevFlowAgentService : IDisposable
         return await tcs.Task;
     }
 
+    private object BuildProfilerCapabilitiesPayload()
+    {
+        var capabilities = _profilerCollector.GetCapabilities();
+        return new
+        {
+            available = IsProfilerFeatureAvailable,
+            supportedInBuild = true,
+            featureEnabled = _options.EnableProfiler,
+            platform = capabilities.Platform,
+            managedMemorySupported = capabilities.ManagedMemorySupported,
+            nativeMemorySupported = capabilities.NativeMemorySupported,
+            gcSupported = capabilities.GcSupported,
+            cpuPercentSupported = capabilities.CpuPercentSupported,
+            fpsSupported = capabilities.FpsSupported,
+            frameTimingsEstimated = capabilities.FrameTimingsEstimated,
+            nativeFrameTimingsSupported = capabilities.NativeFrameTimingsSupported,
+            jankEventsSupported = capabilities.JankEventsSupported,
+            uiThreadStallSupported = capabilities.UiThreadStallSupported,
+            threadCountSupported = capabilities.ThreadCountSupported
+        };
+    }
+
+    private Task<HttpResponse> HandleProfilerCapabilities(HttpRequest request)
+        => Task.FromResult(HttpResponse.Json(BuildProfilerCapabilitiesPayload()));
+
+    private async Task<HttpResponse> HandleProfilerStart(HttpRequest request)
+    {
+        if (!_options.EnableProfiler)
+            return HttpResponse.Error("Profiler is disabled. Set AgentOptions.EnableProfiler=true");
+
+        var body = request.BodyAs<StartProfilerRequest>();
+        var intervalMs = body?.SampleIntervalMs ?? _options.ProfilerSampleIntervalMs;
+        if (intervalMs < 50 || intervalMs > 60_000)
+            return HttpResponse.Error("sampleIntervalMs must be between 50 and 60000");
+
+        var session = await StartProfilerAsync(intervalMs);
+        return HttpResponse.Json(new { session, capabilities = BuildProfilerCapabilitiesPayload() });
+    }
+
+    private async Task<HttpResponse> HandleProfilerStop(HttpRequest request)
+    {
+        var session = await StopProfilerAsync();
+        return HttpResponse.Json(new { session, stoppedAtUtc = DateTime.UtcNow });
+    }
+
+    private Task<HttpResponse> HandleProfilerSamples(HttpRequest request)
+    {
+        if (!long.TryParse(request.QueryParams.GetValueOrDefault("sampleCursor", "0"), out var sampleCursor))
+            sampleCursor = 0;
+        if (!long.TryParse(request.QueryParams.GetValueOrDefault("markerCursor", "0"), out var markerCursor))
+            markerCursor = 0;
+        if (!long.TryParse(request.QueryParams.GetValueOrDefault("spanCursor", "0"), out var spanCursor))
+            spanCursor = 0;
+        if (!int.TryParse(request.QueryParams.GetValueOrDefault("limit", "500"), out var limit))
+            limit = 500;
+
+        limit = Math.Clamp(limit, 1, 5000);
+        var batch = _profilerSessions.GetBatch(sampleCursor, markerCursor, limit, spanCursor);
+        return Task.FromResult(HttpResponse.Json(batch));
+    }
+
+    private Task<HttpResponse> HandleProfilerMarker(HttpRequest request)
+    {
+        if (!IsProfilerFeatureAvailable)
+            return Task.FromResult<HttpResponse>(HttpResponse.Error("Profiler is not available"));
+        if (!_profilerSessions.IsActive)
+            return Task.FromResult<HttpResponse>(HttpResponse.Error("No active profiler session"));
+
+        var body = request.BodyAs<PublishProfilerMarkerRequest>();
+        if (string.IsNullOrWhiteSpace(body?.Name))
+            return Task.FromResult(HttpResponse.Error("name is required"));
+
+        var marker = new ProfilerMarker
+        {
+            TsUtc = DateTime.UtcNow,
+            Type = string.IsNullOrWhiteSpace(body.Type) ? "user.action" : body.Type!,
+            Name = body.Name!,
+            PayloadJson = body.PayloadJson
+        };
+
+        Publish(marker);
+        return Task.FromResult(HttpResponse.Ok("Marker published"));
+    }
+
+    private Task<HttpResponse> HandleProfilerSpan(HttpRequest request)
+    {
+        if (!IsProfilerFeatureAvailable)
+            return Task.FromResult<HttpResponse>(HttpResponse.Error("Profiler is not available"));
+        if (!_profilerSessions.IsActive)
+            return Task.FromResult<HttpResponse>(HttpResponse.Error("No active profiler session"));
+
+        var body = request.BodyAs<PublishProfilerSpanRequest>();
+        if (string.IsNullOrWhiteSpace(body?.Name))
+            return Task.FromResult(HttpResponse.Error("name is required"));
+
+        var startTsUtc = body.StartTsUtc?.ToUniversalTime() ?? DateTime.UtcNow;
+        var endTsUtc = body.EndTsUtc?.ToUniversalTime() ?? startTsUtc;
+
+        var span = new ProfilerSpan
+        {
+            SpanId = Guid.NewGuid().ToString("N"),
+            ParentSpanId = body.ParentSpanId,
+            TraceId = body.TraceId,
+            StartTsUtc = startTsUtc,
+            EndTsUtc = endTsUtc,
+            Kind = string.IsNullOrWhiteSpace(body.Kind) ? "ui.operation" : body.Kind!,
+            Name = body.Name!,
+            Status = string.IsNullOrWhiteSpace(body.Status) ? "ok" : body.Status!,
+            ThreadId = body.ThreadId,
+            Screen = body.Screen,
+            ElementPath = body.ElementPath,
+            TagsJson = body.TagsJson,
+            Error = body.Error
+        };
+
+        Publish(span);
+        return Task.FromResult(HttpResponse.Ok("Span published"));
+    }
+
+    private Task<HttpResponse> HandleProfilerHotspots(HttpRequest request)
+    {
+        if (!int.TryParse(request.QueryParams.GetValueOrDefault("limit", "20"), out var limit))
+            limit = 20;
+        if (!int.TryParse(request.QueryParams.GetValueOrDefault("minDurationMs", "16"), out var minDurationMs))
+            minDurationMs = 16;
+
+        limit = Math.Clamp(limit, 1, 200);
+        minDurationMs = Math.Clamp(minDurationMs, 0, 60_000);
+        var kind = request.QueryParams.GetValueOrDefault("kind");
+        var hotspots = _profilerSessions.GetHotspots(limit, minDurationMs, kind);
+        return Task.FromResult(HttpResponse.Json(hotspots));
+    }
+
+    private async Task<ProfilerSessionInfo> StartProfilerAsync(int intervalMs)
+    {
+        await _profilerStateGate.WaitAsync();
+        try
+        {
+            var current = _profilerSessions.CurrentSession;
+            if (current?.IsActive == true)
+                return current;
+
+            _profilerCollector.Start(intervalMs);
+            var session = _profilerSessions.Start(intervalMs);
+            _lastAutoJankSpanTsUtc = DateTime.MinValue;
+            EnsureAutoUiHooks();
+            _profilerLoopCts = new CancellationTokenSource();
+            _profilerLoopTask = Task.Run(() => RunProfilerLoopAsync(intervalMs, _profilerLoopCts.Token));
+            return session;
+        }
+        finally
+        {
+            _profilerStateGate.Release();
+        }
+    }
+
+    private async Task<ProfilerSessionInfo?> StopProfilerAsync()
+    {
+        await _profilerStateGate.WaitAsync();
+        try
+        {
+            var cts = _profilerLoopCts;
+            var loopTask = _profilerLoopTask;
+            _profilerLoopCts = null;
+            _profilerLoopTask = null;
+
+            cts?.Cancel();
+
+            if (loopTask != null)
+            {
+                try
+                {
+                    await loopTask;
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            }
+
+            cts?.Dispose();
+            _profilerCollector.Stop();
+            StopAutoUiHooks();
+            return _profilerSessions.Stop();
+        }
+        finally
+        {
+            _profilerStateGate.Release();
+        }
+    }
+
+    private async Task RunProfilerLoopAsync(int intervalMs, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            EnsureAutoUiHooks();
+            if (_profilerCollector.TryCollect(out var sample))
+            {
+                _profilerSessions.AddSample(sample);
+                PublishNativeFrameSignals(sample);
+                TryPublishAutoJankSpan(sample);
+            }
+
+            await Task.Delay(intervalMs, ct);
+        }
+    }
+
+    private void PublishNativeFrameSignals(ProfilerSample sample)
+    {
+        if (sample.JankFrameCount <= 0 && sample.UiThreadStallCount <= 0)
+            return;
+
+        if (sample.JankFrameCount > 0)
+        {
+            Publish(new ProfilerMarker
+            {
+                TsUtc = sample.TsUtc,
+                Type = "ui.frame.jank.native",
+                Name = sample.FrameSource,
+                PayloadJson = JsonSerializer.Serialize(new
+                {
+                    jankFrames = sample.JankFrameCount,
+                    frameTimeMsP95 = sample.FrameTimeMsP95,
+                    worstFrameTimeMs = sample.WorstFrameTimeMs,
+                    frameSource = sample.FrameSource,
+                    frameQuality = sample.FrameQuality
+                })
+            });
+        }
+
+        if (sample.UiThreadStallCount > 0)
+        {
+            Publish(new ProfilerMarker
+            {
+                TsUtc = sample.TsUtc,
+                Type = "ui.thread.stall.native",
+                Name = sample.FrameSource,
+                PayloadJson = JsonSerializer.Serialize(new
+                {
+                    stallCount = sample.UiThreadStallCount,
+                    worstFrameTimeMs = sample.WorstFrameTimeMs,
+                    frameSource = sample.FrameSource,
+                    frameQuality = sample.FrameQuality
+                })
+            });
+        }
+    }
+
+    private void TryPublishAutoJankSpan(ProfilerSample sample)
+    {
+        var frameMs = sample.FrameTimeMsP95;
+        var hasNativeJankSignal = sample.JankFrameCount > 0 || sample.UiThreadStallCount > 0;
+        if (!frameMs.HasValue || (frameMs.Value < 20d && !hasNativeJankSignal))
+            return;
+
+        var throttleMs = sample.FrameSource.StartsWith("native.", StringComparison.OrdinalIgnoreCase) ? 100d : 250d;
+        if (_lastAutoJankSpanTsUtc != DateTime.MinValue
+            && (sample.TsUtc - _lastAutoJankSpanTsUtc).TotalMilliseconds < throttleMs)
+            return;
+
+        _lastAutoJankSpanTsUtc = sample.TsUtc;
+        var (actionName, actionElementPath, actionLagMs) = GetRecentUserAction(sample.TsUtc, TimeSpan.FromSeconds(3));
+        var isStall = sample.UiThreadStallCount > 0 || (sample.WorstFrameTimeMs ?? 0d) >= 150d;
+        Publish(new ProfilerSpan
+        {
+            SpanId = Guid.NewGuid().ToString("N"),
+            TraceId = _profilerSessions.CurrentSession?.SessionId,
+            StartTsUtc = sample.TsUtc.AddMilliseconds(-frameMs.Value),
+            EndTsUtc = sample.TsUtc,
+            Kind = "ui.operation",
+            Name = isStall
+                ? (string.IsNullOrWhiteSpace(actionName) ? "ui.thread.stall" : "ui.action.stall")
+                : (string.IsNullOrWhiteSpace(actionName) ? "ui.frame.jank" : "ui.action.jank"),
+            Status = isStall ? "error" : "ok",
+            ThreadId = Environment.CurrentManagedThreadId,
+            Screen = Shell.Current?.CurrentState?.Location?.ToString(),
+            ElementPath = actionElementPath,
+            TagsJson = JsonSerializer.Serialize(new
+            {
+                frameTimeMsP95 = frameMs.Value,
+                fps = sample.Fps,
+                frameSource = sample.FrameSource,
+                frameQuality = sample.FrameQuality,
+                jankFrameCount = sample.JankFrameCount,
+                uiThreadStallCount = sample.UiThreadStallCount,
+                worstFrameTimeMs = sample.WorstFrameTimeMs,
+                actionName,
+                actionLagMs
+            })
+        });
+    }
+
+    private void EnsureAutoUiHooks()
+    {
+        if (!IsProfilerFeatureAvailable || !_profilerSessions.IsActive || _dispatcher == null || !_options.EnableHighLevelUiHooks)
+            return;
+
+        var now = DateTime.UtcNow;
+        if ((now - _lastUiHookScanTsUtc).TotalMilliseconds < UiHookScanIntervalMs)
+            return;
+        if (Interlocked.CompareExchange(ref _uiHookScanInFlight, 1, 0) != 0)
+            return;
+
+        _lastUiHookScanTsUtc = now;
+
+        void Scan()
+        {
+            try
+            {
+                TryEnsureShellNavigationHooks();
+                ScanUiTreeForHooks();
+            }
+            catch (Exception ex)
+            {
+                Publish(new ProfilerMarker
+                {
+                    TsUtc = DateTime.UtcNow,
+                    Type = "profiler.hook.error",
+                    Name = "ui-hook-scan",
+                    PayloadJson = JsonSerializer.Serialize(new { error = ex.GetBaseException().Message })
+                });
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _uiHookScanInFlight, 0);
+            }
+        }
+
+        if (_dispatcher.IsDispatchRequired)
+        {
+            _dispatcher.Dispatch(Scan);
+        }
+        else
+        {
+            Scan();
+        }
+    }
+
+    private void StopAutoUiHooks()
+    {
+        if (_hookedShell != null)
+        {
+            _hookedShell.Navigating -= OnShellNavigating;
+            _hookedShell.Navigated -= OnShellNavigated;
+            _hookedShell = null;
+        }
+
+        lock (_uiHookGate)
+        {
+            foreach (var unsubscribe in _uiHookUnsubscribers)
+                unsubscribe();
+            _uiHookUnsubscribers.Clear();
+            _uiHookGeneration = _uiHookGeneration == int.MaxValue ? 1 : _uiHookGeneration + 1;
+            _navigationStartedAtUtc = null;
+            _navigationTargetRoute = null;
+            _lastUserActionTsUtc = DateTime.MinValue;
+            _lastUserActionName = null;
+            _lastUserActionElementPath = null;
+        }
+    }
+
+    private void TryEnsureShellNavigationHooks()
+    {
+        var shell = Shell.Current;
+        if (shell == null || ReferenceEquals(shell, _hookedShell))
+            return;
+
+        if (_hookedShell != null)
+        {
+            _hookedShell.Navigating -= OnShellNavigating;
+            _hookedShell.Navigated -= OnShellNavigated;
+        }
+
+        shell.Navigating += OnShellNavigating;
+        shell.Navigated += OnShellNavigated;
+        _hookedShell = shell;
+    }
+
+    private void ScanUiTreeForHooks()
+    {
+        if (_app is not IVisualTreeElement appElement)
+            return;
+
+        foreach (var child in appElement.GetVisualChildren())
+        {
+            if (child is Element element)
+                ScanElementForHooks(element);
+        }
+    }
+
+    private void ScanElementForHooks(Element element)
+    {
+        var detailedHooksEnabled = _options.EnableDetailedUiHooks;
+        switch (element)
+        {
+            case Button button when detailedHooksEnabled:
+                AttachButtonHook(button);
+                break;
+            case ImageButton imageButton when detailedHooksEnabled:
+                AttachImageButtonHook(imageButton);
+                break;
+            case Entry entry when detailedHooksEnabled:
+                AttachEntryHook(entry);
+                break;
+            case SearchBar searchBar when detailedHooksEnabled:
+                AttachSearchBarHook(searchBar);
+                break;
+            case CheckBox checkBox when detailedHooksEnabled:
+                AttachCheckBoxHook(checkBox);
+                break;
+            case Switch toggle when detailedHooksEnabled:
+                AttachSwitchHook(toggle);
+                break;
+            case Picker picker when detailedHooksEnabled:
+                AttachPickerHook(picker);
+                break;
+            case ScrollView scrollView:
+                AttachScrollViewHook(scrollView);
+                break;
+            case CollectionView collectionView:
+                AttachCollectionViewHook(collectionView);
+                break;
+            case Page page:
+                AttachPageHooks(page);
+                break;
+        }
+
+        if (detailedHooksEnabled && element is View view)
+        {
+            foreach (var tapGesture in view.GestureRecognizers.OfType<TapGestureRecognizer>())
+                AttachTapGestureHook(tapGesture);
+        }
+
+        if (element is not IVisualTreeElement visualElement)
+            return;
+
+        foreach (var child in visualElement.GetVisualChildren())
+        {
+            if (child is Element childElement)
+                ScanElementForHooks(childElement);
+        }
+    }
+
+    private bool TryRegisterUiHook(BindableObject target, string hookKey, Action? unsubscribe = null)
+    {
+        lock (_uiHookGate)
+        {
+            var state = _uiHookStates.GetOrCreateValue(target);
+            if (state.Generation != _uiHookGeneration)
+            {
+                state.Generation = _uiHookGeneration;
+                state.HookKeys.Clear();
+            }
+
+            if (!state.HookKeys.Add(hookKey))
+                return false;
+
+            if (unsubscribe != null)
+                _uiHookUnsubscribers.Add(unsubscribe);
+
+            return true;
+        }
+    }
+
+    private void AttachButtonHook(Button button)
+    {
+        if (!TryRegisterUiHook(button, "Button.Clicked", () => button.Clicked -= OnButtonClicked))
+            return;
+        button.Clicked += OnButtonClicked;
+    }
+
+    private void AttachImageButtonHook(ImageButton imageButton)
+    {
+        if (!TryRegisterUiHook(imageButton, "ImageButton.Clicked", () => imageButton.Clicked -= OnImageButtonClicked))
+            return;
+        imageButton.Clicked += OnImageButtonClicked;
+    }
+
+    private void AttachEntryHook(Entry entry)
+    {
+        if (!TryRegisterUiHook(entry, "Entry.Completed", () => entry.Completed -= OnEntryCompleted))
+            return;
+        entry.Completed += OnEntryCompleted;
+    }
+
+    private void AttachSearchBarHook(SearchBar searchBar)
+    {
+        if (!TryRegisterUiHook(searchBar, "SearchBar.SearchButtonPressed", () => searchBar.SearchButtonPressed -= OnSearchBarSearchButtonPressed))
+            return;
+        searchBar.SearchButtonPressed += OnSearchBarSearchButtonPressed;
+    }
+
+    private void AttachCheckBoxHook(CheckBox checkBox)
+    {
+        if (!TryRegisterUiHook(checkBox, "CheckBox.CheckedChanged", () => checkBox.CheckedChanged -= OnCheckBoxCheckedChanged))
+            return;
+        checkBox.CheckedChanged += OnCheckBoxCheckedChanged;
+    }
+
+    private void AttachSwitchHook(Switch toggle)
+    {
+        if (!TryRegisterUiHook(toggle, "Switch.Toggled", () => toggle.Toggled -= OnSwitchToggled))
+            return;
+        toggle.Toggled += OnSwitchToggled;
+    }
+
+    private void AttachPickerHook(Picker picker)
+    {
+        if (!TryRegisterUiHook(picker, "Picker.SelectedIndexChanged", () => picker.SelectedIndexChanged -= OnPickerSelectedIndexChanged))
+            return;
+        picker.SelectedIndexChanged += OnPickerSelectedIndexChanged;
+    }
+
+    private void AttachCollectionViewHook(CollectionView collectionView)
+    {
+        if (!TryRegisterUiHook(collectionView, "CollectionView.SelectionChanged", () => collectionView.SelectionChanged -= OnCollectionViewSelectionChanged))
+            return;
+        collectionView.SelectionChanged += OnCollectionViewSelectionChanged;
+        if (TryRegisterUiHook(collectionView, "CollectionView.Scrolled", () => collectionView.Scrolled -= OnCollectionViewScrolled))
+            collectionView.Scrolled += OnCollectionViewScrolled;
+        AttachRenderHooks(collectionView, "collection");
+    }
+
+    private void AttachScrollViewHook(ScrollView scrollView)
+    {
+        if (TryRegisterUiHook(scrollView, "ScrollView.Scrolled", () => scrollView.Scrolled -= OnScrollViewScrolled))
+            scrollView.Scrolled += OnScrollViewScrolled;
+        AttachRenderHooks(scrollView, "scroll");
+    }
+
+    private void AttachRenderHooks(VisualElement element, string role)
+    {
+        var renderState = _elementRenderStates.GetOrCreateValue(element);
+        if (renderState.TrackingStartedAtUtc == default)
+            renderState.TrackingStartedAtUtc = DateTime.UtcNow;
+        if (string.IsNullOrWhiteSpace(renderState.Role))
+            renderState.Role = role;
+
+        if (TryRegisterUiHook(element, $"{role}.SizeChanged", () => element.SizeChanged -= OnTrackedElementSizeChanged))
+            element.SizeChanged += OnTrackedElementSizeChanged;
+        if (TryRegisterUiHook(element, $"{role}.MeasureInvalidated", () => element.MeasureInvalidated -= OnTrackedElementMeasureInvalidated))
+            element.MeasureInvalidated += OnTrackedElementMeasureInvalidated;
+    }
+
+    private void AttachTapGestureHook(TapGestureRecognizer tapGesture)
+    {
+        if (!TryRegisterUiHook(tapGesture, "TapGestureRecognizer.Tapped", () => tapGesture.Tapped -= OnTapGestureTapped))
+            return;
+        tapGesture.Tapped += OnTapGestureTapped;
+    }
+
+    private void AttachPageHooks(Page page)
+    {
+        if (TryRegisterUiHook(page, "Page.Appearing", () => page.Appearing -= OnPageAppearing))
+            page.Appearing += OnPageAppearing;
+        if (TryRegisterUiHook(page, "Page.Disappearing", () => page.Disappearing -= OnPageDisappearing))
+            page.Disappearing += OnPageDisappearing;
+        if (TryRegisterUiHook(page, "Page.SizeChanged", () => page.SizeChanged -= OnPageSizeChanged))
+            page.SizeChanged += OnPageSizeChanged;
+        if (TryRegisterUiHook(page, "Page.MeasureInvalidated", () => page.MeasureInvalidated -= OnPageMeasureInvalidated))
+            page.MeasureInvalidated += OnPageMeasureInvalidated;
+        AttachRenderHooks(page, "page");
+    }
+
+    private void OnButtonClicked(object? sender, EventArgs args)
+        => TrackUiInteraction("ui.input.button.click", sender as Element);
+
+    private void OnImageButtonClicked(object? sender, EventArgs args)
+        => TrackUiInteraction("ui.input.image-button.click", sender as Element);
+
+    private void OnEntryCompleted(object? sender, EventArgs args)
+        => TrackUiInteraction("ui.input.entry.complete", sender as Element);
+
+    private void OnSearchBarSearchButtonPressed(object? sender, EventArgs args)
+        => TrackUiInteraction("ui.input.search.submit", sender as Element);
+
+    private void OnCheckBoxCheckedChanged(object? sender, CheckedChangedEventArgs args)
+        => TrackUiInteraction("ui.input.checkbox.toggle", sender as Element, new { value = args.Value });
+
+    private void OnSwitchToggled(object? sender, ToggledEventArgs args)
+        => TrackUiInteraction("ui.input.switch.toggle", sender as Element, new { value = args.Value });
+
+    private void OnPickerSelectedIndexChanged(object? sender, EventArgs args)
+    {
+        var picker = sender as Picker;
+        TrackUiInteraction("ui.input.picker.select", picker, new { selectedIndex = picker?.SelectedIndex });
+    }
+
+    private void OnCollectionViewSelectionChanged(object? sender, SelectionChangedEventArgs args)
+    {
+        var selectionCount = args.CurrentSelection?.Count ?? 0;
+        TrackUiInteraction("ui.input.collection.select", sender as Element, new { selectionCount });
+    }
+
+    private void OnCollectionViewScrolled(object? sender, ItemsViewScrolledEventArgs args)
+    {
+        if (sender is not CollectionView collectionView)
+            return;
+
+        var horizontalOffset = TryReadDoubleProperty(args, "HorizontalOffset");
+        var verticalOffset = TryReadDoubleProperty(args, "VerticalOffset");
+        var firstVisibleItem = TryReadIntProperty(args, "FirstVisibleItemIndex");
+        var lastVisibleItem = TryReadIntProperty(args, "LastVisibleItemIndex");
+
+        TrackScrollEvent(
+            collectionView,
+            sourceName: "collection-view",
+            offsetX: horizontalOffset,
+            offsetY: verticalOffset,
+            firstVisibleIndex: firstVisibleItem,
+            lastVisibleIndex: lastVisibleItem);
+    }
+
+    private void OnScrollViewScrolled(object? sender, ScrolledEventArgs args)
+    {
+        if (sender is not ScrollView scrollView)
+            return;
+
+        TrackScrollEvent(
+            scrollView,
+            sourceName: "scroll-view",
+            offsetX: args.ScrollX,
+            offsetY: args.ScrollY);
+    }
+
+    private void TrackScrollEvent(
+        BindableObject source,
+        string sourceName,
+        double offsetX,
+        double offsetY,
+        int? firstVisibleIndex = null,
+        int? lastVisibleIndex = null)
+    {
+        if (!IsProfilerFeatureAvailable || !_profilerSessions.IsActive)
+            return;
+
+        var now = DateTime.UtcNow;
+        var state = _scrollBatchStates.GetOrCreateValue(source);
+        var elementPath = BuildElementPath(source as Element);
+
+        if (!state.IsActive)
+        {
+            state.IsActive = true;
+            state.StartedAtUtc = now;
+            state.StartOffsetX = offsetX;
+            state.StartOffsetY = offsetY;
+            state.EventCount = 0;
+            state.StartFirstVisibleIndex = firstVisibleIndex;
+            state.StartLastVisibleIndex = lastVisibleIndex;
+            RememberUserAction("ui.scroll", elementPath, now);
+            Publish(new ProfilerMarker
+            {
+                TsUtc = now,
+                Type = "ui.scroll.start",
+                Name = sourceName,
+                PayloadJson = JsonSerializer.Serialize(new
+                {
+                    source = sourceName,
+                    elementPath,
+                    offsetX,
+                    offsetY,
+                    firstVisibleIndex,
+                    lastVisibleIndex
+                })
+            });
+        }
+
+        state.EventCount++;
+        state.LastEventAtUtc = now;
+        state.LastOffsetX = offsetX;
+        state.LastOffsetY = offsetY;
+        state.LastFirstVisibleIndex = firstVisibleIndex;
+        state.LastLastVisibleIndex = lastVisibleIndex;
+        var flushVersion = ++state.FlushVersion;
+
+        if (_dispatcher != null)
+        {
+            _dispatcher.DispatchDelayed(
+                TimeSpan.FromMilliseconds(220),
+                () => TryFlushScrollBatch(source, sourceName, state, flushVersion));
+        }
+        else
+        {
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(220);
+                TryFlushScrollBatch(source, sourceName, state, flushVersion);
+            });
+        }
+    }
+
+    private void TryFlushScrollBatch(BindableObject source, string sourceName, ScrollBatchState state, int flushVersion)
+    {
+        if (!state.IsActive || flushVersion != state.FlushVersion)
+            return;
+        if ((DateTime.UtcNow - state.LastEventAtUtc).TotalMilliseconds < 180)
+            return;
+
+        state.IsActive = false;
+        var startTsUtc = state.StartedAtUtc;
+        var endTsUtc = state.LastEventAtUtc;
+        if (startTsUtc == default || endTsUtc < startTsUtc)
+            return;
+
+        var deltaX = state.LastOffsetX - state.StartOffsetX;
+        var deltaY = state.LastOffsetY - state.StartOffsetY;
+        var visibleShift = ComputeVisibleShift(state);
+        var elementPath = BuildElementPath(source as Element);
+
+        Publish(new ProfilerMarker
+        {
+            TsUtc = endTsUtc,
+            Type = "ui.scroll.end",
+            Name = sourceName,
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                source = sourceName,
+                elementPath,
+                deltaX,
+                deltaY,
+                visibleShift,
+                events = state.EventCount
+            })
+        });
+
+        Publish(new ProfilerSpan
+        {
+            SpanId = Guid.NewGuid().ToString("N"),
+            TraceId = _profilerSessions.CurrentSession?.SessionId,
+            StartTsUtc = startTsUtc,
+            EndTsUtc = endTsUtc,
+            Kind = "ui.scroll",
+            Name = "ui.scroll.batch",
+            Status = "ok",
+            ThreadId = Environment.CurrentManagedThreadId,
+            Screen = Shell.Current?.CurrentState?.Location?.ToString(),
+            ElementPath = elementPath,
+            TagsJson = JsonSerializer.Serialize(new
+            {
+                source = sourceName,
+                events = state.EventCount,
+                startOffsetX = state.StartOffsetX,
+                startOffsetY = state.StartOffsetY,
+                endOffsetX = state.LastOffsetX,
+                endOffsetY = state.LastOffsetY,
+                deltaX,
+                deltaY,
+                startFirstVisibleIndex = state.StartFirstVisibleIndex,
+                startLastVisibleIndex = state.StartLastVisibleIndex,
+                endFirstVisibleIndex = state.LastFirstVisibleIndex,
+                endLastVisibleIndex = state.LastLastVisibleIndex,
+                visibleShift
+            })
+        });
+    }
+
+    private static int? ComputeVisibleShift(ScrollBatchState state)
+    {
+        if (!state.StartFirstVisibleIndex.HasValue || !state.LastFirstVisibleIndex.HasValue)
+            return null;
+
+        return Math.Abs(state.LastFirstVisibleIndex.Value - state.StartFirstVisibleIndex.Value);
+    }
+
+    private void OnTrackedElementMeasureInvalidated(object? sender, EventArgs args)
+    {
+        if (sender is not VisualElement element)
+            return;
+
+        var state = _elementRenderStates.GetOrCreateValue(element);
+        state.MeasureInvalidatedCount++;
+    }
+
+    private void OnTrackedElementSizeChanged(object? sender, EventArgs args)
+    {
+        if (sender is not VisualElement element)
+            return;
+
+        var state = _elementRenderStates.GetOrCreateValue(element);
+        state.SizeChangedCount++;
+        if (state.FirstLayoutPublished || element.Width <= 0 || element.Height <= 0)
+            return;
+
+        if (state.TrackingStartedAtUtc == default)
+            state.TrackingStartedAtUtc = DateTime.UtcNow;
+
+        state.FirstLayoutPublished = true;
+        PublishUiOperationSpan(
+            "ui.render.first-layout",
+            state.TrackingStartedAtUtc,
+            true,
+            null,
+            BuildElementPath(element),
+            new
+            {
+                role = state.Role,
+                viewType = element.GetType().Name,
+                width = element.Width,
+                height = element.Height,
+                sizeChangedCount = state.SizeChangedCount,
+                measureInvalidatedCount = state.MeasureInvalidatedCount
+            });
+    }
+
+    private void OnTapGestureTapped(object? sender, TappedEventArgs args)
+    {
+        var parameter = args.Parameter?.ToString();
+        TrackUiInteraction("ui.input.tap-gesture", sender as Element, new { parameter });
+    }
+
+    private void OnPageAppearing(object? sender, EventArgs args)
+    {
+        if (sender is not Page page)
+            return;
+
+        var now = DateTime.UtcNow;
+        var route = Shell.Current?.CurrentState?.Location?.ToString();
+        var state = _pageLifecycleStates.GetOrCreateValue(page);
+        state.AppearingAtUtc = now;
+        state.Route = route;
+        state.FirstLayoutPublished = false;
+        state.SizeChangedCount = 0;
+        state.MeasureInvalidatedCount = 0;
+
+        TrackUiInteraction("ui.page.appearing", page, new { route, page = page.GetType().Name });
+        TryPublishNavigationToAppearing(page, route);
+    }
+
+    private void OnPageDisappearing(object? sender, EventArgs args)
+    {
+        if (sender is not Page page)
+            return;
+
+        var route = Shell.Current?.CurrentState?.Location?.ToString();
+        TrackUiInteraction("ui.page.disappearing", page, new { route, page = page.GetType().Name });
+    }
+
+    private void OnPageMeasureInvalidated(object? sender, EventArgs args)
+    {
+        if (sender is not Page page)
+            return;
+
+        var state = _pageLifecycleStates.GetOrCreateValue(page);
+        state.MeasureInvalidatedCount++;
+    }
+
+    private void OnPageSizeChanged(object? sender, EventArgs args)
+    {
+        if (sender is not Page page)
+            return;
+
+        var now = DateTime.UtcNow;
+        var state = _pageLifecycleStates.GetOrCreateValue(page);
+        state.SizeChangedCount++;
+        if (state.FirstLayoutPublished || page.Width <= 0 || page.Height <= 0)
+            return;
+
+        state.FirstLayoutPublished = true;
+        var startTsUtc = state.AppearingAtUtc == default ? now : state.AppearingAtUtc;
+        var route = state.Route ?? Shell.Current?.CurrentState?.Location?.ToString();
+
+        PublishUiOperationSpan(
+            "ui.page.first-layout",
+            startTsUtc,
+            true,
+            null,
+            BuildElementPath(page),
+            new
+            {
+                route,
+                page = page.GetType().Name,
+                width = page.Width,
+                height = page.Height,
+                sizeChangedCount = state.SizeChangedCount,
+                measureInvalidatedCount = state.MeasureInvalidatedCount
+            });
+
+        TryPublishNavigationToFirstLayout(page, route);
+    }
+
+    private void OnShellNavigating(object? sender, ShellNavigatingEventArgs args)
+    {
+        var startedAtUtc = DateTime.UtcNow;
+        var targetRoute = TryReadNavigationRoute(args, "Target")
+            ?? Shell.Current?.CurrentState?.Location?.ToString()
+            ?? "unknown";
+
+        lock (_uiHookGate)
+        {
+            _navigationStartedAtUtc = startedAtUtc;
+            _navigationTargetRoute = targetRoute;
+        }
+        RememberUserAction("navigation.start", targetRoute, startedAtUtc);
+
+        Publish(new ProfilerMarker
+        {
+            TsUtc = startedAtUtc,
+            Type = "navigation.start",
+            Name = targetRoute,
+            PayloadJson = JsonSerializer.Serialize(new { route = targetRoute })
+        });
+    }
+
+    private void OnShellNavigated(object? sender, ShellNavigatedEventArgs args)
+    {
+        var endedAtUtc = DateTime.UtcNow;
+        DateTime startedAtUtc;
+        string route;
+
+        lock (_uiHookGate)
+        {
+            startedAtUtc = _navigationStartedAtUtc ?? endedAtUtc;
+            route = _navigationTargetRoute
+                ?? TryReadNavigationRoute(args, "Current")
+                ?? Shell.Current?.CurrentState?.Location?.ToString()
+                ?? "unknown";
+        }
+
+        var source = TryReadNavigationSource(args) ?? "unknown";
+        var currentPage = Shell.Current?.CurrentPage?.GetType().Name;
+
+        Publish(new ProfilerMarker
+        {
+            TsUtc = endedAtUtc,
+            Type = "navigation.end",
+            Name = route,
+            PayloadJson = JsonSerializer.Serialize(new { route, source, page = currentPage })
+        });
+        RememberUserAction("navigation.route", route, endedAtUtc);
+
+        PublishUiOperationSpan(
+            "navigation.shell.completed",
+            startedAtUtc,
+            true,
+            null,
+            route,
+            new { route, source, page = currentPage });
+    }
+
+    private void TryPublishNavigationToAppearing(Page page, string? route)
+    {
+        DateTime? navigationStartedAtUtc;
+        string? navigationRoute;
+        lock (_uiHookGate)
+        {
+            navigationStartedAtUtc = _navigationStartedAtUtc;
+            navigationRoute = _navigationTargetRoute;
+        }
+
+        if (!navigationStartedAtUtc.HasValue)
+            return;
+
+        PublishUiOperationSpan(
+            "navigation.to-page-appearing",
+            navigationStartedAtUtc.Value,
+            true,
+            null,
+            BuildElementPath(page),
+            new
+            {
+                targetRoute = navigationRoute,
+                currentRoute = route,
+                page = page.GetType().Name
+            });
+    }
+
+    private void TryPublishNavigationToFirstLayout(Page page, string? route)
+    {
+        DateTime? navigationStartedAtUtc;
+        string? navigationRoute;
+        lock (_uiHookGate)
+        {
+            navigationStartedAtUtc = _navigationStartedAtUtc;
+            navigationRoute = _navigationTargetRoute;
+            _navigationStartedAtUtc = null;
+            _navigationTargetRoute = null;
+        }
+
+        if (!navigationStartedAtUtc.HasValue)
+            return;
+
+        PublishUiOperationSpan(
+            "navigation.to-first-layout",
+            navigationStartedAtUtc.Value,
+            true,
+            null,
+            BuildElementPath(page),
+            new
+            {
+                targetRoute = navigationRoute,
+                currentRoute = route,
+                page = page.GetType().Name
+            });
+    }
+
+    private void TrackUiInteraction(string name, Element? element, object? tags = null)
+    {
+        if (!IsProfilerFeatureAvailable || !_profilerSessions.IsActive)
+            return;
+
+        var startedAtUtc = DateTime.UtcNow;
+        var elementPath = BuildElementPath(element);
+        var markerPayload = JsonSerializer.Serialize(new
+        {
+            name,
+            elementPath,
+            tags
+        });
+
+        Publish(new ProfilerMarker
+        {
+            TsUtc = startedAtUtc,
+            Type = "user.action",
+            Name = name,
+            PayloadJson = markerPayload
+        });
+
+        RememberUserAction(name, elementPath, startedAtUtc);
+
+        if (_dispatcher != null)
+        {
+            _dispatcher.DispatchDelayed(
+                TimeSpan.FromMilliseconds(1),
+                () => PublishUiOperationSpan(name, startedAtUtc, true, null, elementPath, tags));
+            return;
+        }
+
+        PublishUiOperationSpan(name, startedAtUtc, true, null, elementPath, tags);
+    }
+
+    private static string? BuildElementPath(Element? element)
+    {
+        if (element == null)
+            return null;
+
+        if (!string.IsNullOrWhiteSpace(element.AutomationId))
+            return $"{element.GetType().Name}#{element.AutomationId}";
+        if (element is Page page && !string.IsNullOrWhiteSpace(page.Title))
+            return $"{page.GetType().Name}:{page.Title}";
+        if (element is VisualElement visualElement && !string.IsNullOrWhiteSpace(visualElement.StyleId))
+            return $"{visualElement.GetType().Name}[{visualElement.StyleId}]";
+
+        return element.GetType().Name;
+    }
+
+    private void RememberUserAction(string name, string? elementPath, DateTime timestampUtc)
+    {
+        lock (_uiHookGate)
+        {
+            _lastUserActionTsUtc = timestampUtc;
+            _lastUserActionName = name;
+            _lastUserActionElementPath = elementPath;
+        }
+    }
+
+    private (string? ActionName, string? ElementPath, double? LagMs) GetRecentUserAction(DateTime sampleTsUtc, TimeSpan maxAge)
+    {
+        lock (_uiHookGate)
+        {
+            if (_lastUserActionTsUtc == DateTime.MinValue || string.IsNullOrWhiteSpace(_lastUserActionName))
+                return (null, null, null);
+
+            var lag = sampleTsUtc - _lastUserActionTsUtc;
+            if (lag < TimeSpan.Zero || lag > maxAge)
+                return (null, null, null);
+
+            return (_lastUserActionName, _lastUserActionElementPath, lag.TotalMilliseconds);
+        }
+    }
+
+    private static double TryReadDoubleProperty(object instance, string propertyName)
+    {
+        var value = instance.GetType().GetProperty(propertyName)?.GetValue(instance);
+        return value switch
+        {
+            double asDouble => asDouble,
+            float asFloat => asFloat,
+            int asInt => asInt,
+            long asLong => asLong,
+            _ => 0d
+        };
+    }
+
+    private static int? TryReadIntProperty(object instance, string propertyName)
+    {
+        var value = instance.GetType().GetProperty(propertyName)?.GetValue(instance);
+        return value switch
+        {
+            int asInt => asInt,
+            long asLong => (int)asLong,
+            short asShort => asShort,
+            _ => null
+        };
+    }
+
+    private static string? TryReadNavigationRoute(object eventArgs, string statePropertyName)
+    {
+        var state = eventArgs.GetType().GetProperty(statePropertyName)?.GetValue(eventArgs);
+        if (state == null)
+            return null;
+
+        var location = state.GetType().GetProperty("Location")?.GetValue(state);
+        return location?.ToString() ?? state.ToString();
+    }
+
+    private static string? TryReadNavigationSource(object eventArgs)
+        => eventArgs.GetType().GetProperty("Source")?.GetValue(eventArgs)?.ToString();
+
+    public void Publish(ProfilerMarker marker)
+    {
+        if (!IsProfilerFeatureAvailable || !_profilerSessions.IsActive)
+            return;
+
+        if (marker.TsUtc == default)
+            marker.TsUtc = DateTime.UtcNow;
+        if (string.IsNullOrWhiteSpace(marker.Type))
+            marker.Type = "user.action";
+        if (string.IsNullOrWhiteSpace(marker.Name))
+            marker.Name = marker.Type;
+
+        _profilerSessions.AddMarker(marker);
+    }
+
+    public void Publish(ProfilerSpan span)
+    {
+        if (!IsProfilerFeatureAvailable || !_profilerSessions.IsActive)
+            return;
+
+        if (string.IsNullOrWhiteSpace(span.Kind))
+            span.Kind = "ui.operation";
+        if (string.IsNullOrWhiteSpace(span.Name))
+            span.Name = span.Kind;
+        if (string.IsNullOrWhiteSpace(span.Status))
+            span.Status = "ok";
+        if (span.StartTsUtc == default)
+            span.StartTsUtc = DateTime.UtcNow;
+        if (span.EndTsUtc == default || span.EndTsUtc < span.StartTsUtc)
+            span.EndTsUtc = span.StartTsUtc;
+        if (span.ThreadId == null)
+            span.ThreadId = Environment.CurrentManagedThreadId;
+
+        _profilerSessions.AddSpan(span);
+    }
+
+    private void PublishUiOperationSpan(
+        string name,
+        DateTime startedAtUtc,
+        bool success,
+        string? error = null,
+        string? elementPath = null,
+        object? tags = null)
+    {
+        var endTsUtc = DateTime.UtcNow;
+        var route = Shell.Current?.CurrentState?.Location?.ToString();
+        var span = new ProfilerSpan
+        {
+            SpanId = Guid.NewGuid().ToString("N"),
+            TraceId = _profilerSessions.CurrentSession?.SessionId,
+            StartTsUtc = startedAtUtc,
+            EndTsUtc = endTsUtc,
+            Kind = "ui.operation",
+            Name = name,
+            Status = success ? "ok" : "error",
+            ThreadId = Environment.CurrentManagedThreadId,
+            Screen = route,
+            ElementPath = elementPath,
+            TagsJson = tags == null ? null : JsonSerializer.Serialize(tags),
+            Error = error
+        };
+
+        Publish(span);
+    }
+
+    private void HandleCapturedNetworkRequest(NetworkRequestEntry entry)
+    {
+        if (!IsProfilerFeatureAvailable || !_profilerSessions.IsActive)
+            return;
+
+        var endTimestampUtc = entry.Timestamp.UtcDateTime;
+        var startTimestampUtc = endTimestampUtc - TimeSpan.FromMilliseconds(Math.Max(0, entry.DurationMs));
+        var markerName = $"{entry.Method} {entry.Path ?? entry.Url}";
+
+        Publish(new ProfilerMarker
+        {
+            TsUtc = startTimestampUtc,
+            Type = "network.request.start",
+            Name = markerName,
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                id = entry.Id,
+                method = entry.Method,
+                url = entry.Url,
+                host = entry.Host
+            })
+        });
+
+        Publish(new ProfilerMarker
+        {
+            TsUtc = endTimestampUtc,
+            Type = "network.request.end",
+            Name = markerName,
+            PayloadJson = JsonSerializer.Serialize(new
+            {
+                id = entry.Id,
+                method = entry.Method,
+                url = entry.Url,
+                statusCode = entry.StatusCode,
+                durationMs = entry.DurationMs,
+                error = entry.Error
+            })
+        });
+
+        if (entry.DurationMs >= 50 || !string.IsNullOrWhiteSpace(entry.Error))
+        {
+            Publish(new ProfilerSpan
+            {
+                SpanId = Guid.NewGuid().ToString("N"),
+                TraceId = _profilerSessions.CurrentSession?.SessionId,
+                StartTsUtc = startTimestampUtc,
+                EndTsUtc = endTimestampUtc,
+                Kind = "network.request",
+                Name = markerName,
+                Status = string.IsNullOrWhiteSpace(entry.Error) ? "ok" : "error",
+                ThreadId = Environment.CurrentManagedThreadId,
+                Screen = Shell.Current?.CurrentState?.Location?.ToString(),
+                TagsJson = JsonSerializer.Serialize(new
+                {
+                    id = entry.Id,
+                    method = entry.Method,
+                    host = entry.Host,
+                    statusCode = entry.StatusCode
+                }),
+                Error = entry.Error
+            });
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        NetworkStore.OnRequestCaptured -= HandleCapturedNetworkRequest;
+        StopAutoUiHooks();
+
+        var cts = _profilerLoopCts;
+        var loopTask = _profilerLoopTask;
+        _profilerLoopCts = null;
+        _profilerLoopTask = null;
+
+        cts?.Cancel();
+        if (loopTask != null)
+        {
+            try { loopTask.Wait(TimeSpan.FromSeconds(3)); }
+            catch (AggregateException) { }
+        }
+        cts?.Dispose();
+
+        _profilerCollector.Stop();
+        (_profilerCollector as IDisposable)?.Dispose();
+        _profilerStateGate.Dispose();
         _brokerRegistration?.Dispose();
         _server.Dispose();
         _logProvider?.Dispose();
