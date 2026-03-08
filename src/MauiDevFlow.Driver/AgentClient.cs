@@ -123,13 +123,13 @@ public class AgentClient : IDisposable
     }
 
     /// <summary>
-    /// Scroll by delta or scroll an element into view.
+    /// Scroll by delta, item index, or scroll element into view.
     /// </summary>
-    public async Task<bool> ScrollAsync(string? elementId = null, double deltaX = 0, double deltaY = 0, bool animated = true, int? window = null)
+    public async Task<bool> ScrollAsync(string? elementId = null, double deltaX = 0, double deltaY = 0, bool animated = true, int? window = null, int? itemIndex = null, int? groupIndex = null, string? scrollToPosition = null)
     {
         var url = "/api/action/scroll";
         if (window != null) url += $"?window={window}";
-        return await PostActionAsync(url, new { elementId, deltaX, deltaY, animated });
+        return await PostActionAsync(url, new { elementId, deltaX, deltaY, animated, itemIndex, groupIndex, scrollToPosition });
     }
 
     /// <summary>
@@ -146,7 +146,7 @@ public class AgentClient : IDisposable
     /// Take a screenshot (returns PNG bytes).
     /// Optionally target a specific element by ID or CSS selector.
     /// </summary>
-    public async Task<byte[]?> ScreenshotAsync(int? window = null, string? elementId = null, string? selector = null)
+    public async Task<byte[]?> ScreenshotAsync(int? window = null, string? elementId = null, string? selector = null, int? maxWidth = null, string? scale = null)
     {
         try
         {
@@ -154,6 +154,8 @@ public class AgentClient : IDisposable
             if (window != null) queryParams.Add($"window={window}");
             if (elementId != null) queryParams.Add($"id={Uri.EscapeDataString(elementId)}");
             if (selector != null) queryParams.Add($"selector={Uri.EscapeDataString(selector)}");
+            if (maxWidth != null) queryParams.Add($"maxWidth={maxWidth}");
+            if (scale != null) queryParams.Add($"scale={Uri.EscapeDataString(scale)}");
 
             var url = queryParams.Count > 0
                 ? $"{_baseUrl}/api/screenshot?{string.Join("&", queryParams)}"

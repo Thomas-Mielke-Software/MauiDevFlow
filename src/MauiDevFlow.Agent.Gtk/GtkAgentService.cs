@@ -17,6 +17,35 @@ public class GtkAgentService : DevFlowAgentService
     protected override string DeviceTypeName => "Virtual";
     protected override string IdiomName => "Desktop";
 
+    protected override double GetWindowDisplayDensity(IWindow? window)
+    {
+        try
+        {
+            // GTK4: get the scale factor from the native Gtk.Window's display/surface
+            if (window?.Handler?.PlatformView is global::Gtk.Window gtkWindow)
+            {
+                var surface = gtkWindow.GetSurface();
+                if (surface != null)
+                    return surface.GetScaleFactor();
+            }
+
+            // Fallback: walk widget hierarchy to find the Gtk.Window
+            if (window is Microsoft.Maui.Controls.Window mauiWindow)
+            {
+                if (mauiWindow.Page is Shell shell && shell.CurrentPage?.Handler?.PlatformView is global::Gtk.Widget cpWidget)
+                {
+                    var root = cpWidget.GetRoot();
+                    if (root is global::Gtk.Widget rootWidget)
+                        return rootWidget.GetScaleFactor();
+                }
+                if (mauiWindow.Page?.Handler?.PlatformView is global::Gtk.Widget pageWidget)
+                    return pageWidget.GetScaleFactor();
+            }
+        }
+        catch { }
+        return 1.0;
+    }
+
     protected override (double width, double height) GetNativeWindowSize(IWindow window)
     {
         try
@@ -46,6 +75,39 @@ public class GtkAgentService : DevFlowAgentService
         }
         catch { }
         return base.GetNativeWindowSize(window);
+    }
+
+    protected override Task<bool> TryNativeScroll(VisualElement element, double deltaX, double deltaY)
+    {
+        try
+        {
+            var target = element;
+            while (target != null)
+            {
+                if (target.Handler?.PlatformView is global::Gtk.Widget widget)
+                {
+                    // Walk up GTK widget hierarchy looking for ScrolledWindow
+                    var current = widget;
+                    while (current != null)
+                    {
+                        if (current is global::Gtk.ScrolledWindow scrolledWindow)
+                        {
+                            var hAdj = scrolledWindow.GetHadjustment();
+                            var vAdj = scrolledWindow.GetVadjustment();
+                            if (hAdj != null && deltaX != 0)
+                                hAdj.SetValue(Math.Max(hAdj.GetLower(), Math.Min(hAdj.GetValue() + deltaX, hAdj.GetUpper() - hAdj.GetPageSize())));
+                            if (vAdj != null && deltaY != 0)
+                                vAdj.SetValue(Math.Max(vAdj.GetLower(), Math.Min(vAdj.GetValue() - deltaY, vAdj.GetUpper() - vAdj.GetPageSize())));
+                            return Task.FromResult(true);
+                        }
+                        current = current.GetParent() as global::Gtk.Widget;
+                    }
+                }
+                target = target.Parent as VisualElement;
+            }
+        }
+        catch { }
+        return Task.FromResult(false);
     }
 
     protected override bool TryNativeTap(VisualElement ve)

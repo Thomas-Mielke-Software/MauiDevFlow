@@ -17,6 +17,199 @@ public class PlatformAgentService : DevFlowAgentService
 
     protected override VisualTreeWalker CreateTreeWalker() => new PlatformVisualTreeWalker();
 
+    protected override double GetWindowDisplayDensity(IWindow? window)
+    {
+        try
+        {
+#if IOS || MACCATALYST
+            if (window?.Handler?.PlatformView is UIKit.UIWindow uiWindow)
+                return uiWindow.Screen.Scale;
+            return UIKit.UIScreen.MainScreen.Scale;
+#elif ANDROID
+            if (window?.Handler?.PlatformView is Android.App.Activity activity)
+                return activity.Resources?.DisplayMetrics?.Density ?? 1.0;
+            if (Android.App.Application.Context.Resources?.DisplayMetrics is Android.Util.DisplayMetrics dm)
+                return dm.Density;
+            return 1.0;
+#elif WINDOWS
+            if (window?.Handler?.PlatformView is Microsoft.UI.Xaml.Window winuiWindow)
+            {
+                var xamlRoot = winuiWindow.Content?.XamlRoot;
+                if (xamlRoot != null)
+                    return xamlRoot.RasterizationScale;
+            }
+            return 1.0;
+#elif MACOS
+            if (window?.Handler?.PlatformView is AppKit.NSWindow nsWindow)
+                return nsWindow.BackingScaleFactor;
+            return AppKit.NSScreen.MainScreen?.BackingScaleFactor ?? 2.0;
+#else
+            return base.GetWindowDisplayDensity(window);
+#endif
+        }
+        catch
+        {
+            return base.GetWindowDisplayDensity(window);
+        }
+    }
+
+    protected override Task<bool> TryNativeScroll(VisualElement element, double deltaX, double deltaY)
+    {
+        try
+        {
+            // Walk up from the element to find a native scrollable view
+            var target = element;
+            while (target != null)
+            {
+                var platformView = target.Handler?.PlatformView;
+                if (platformView != null)
+                {
+#if IOS || MACCATALYST
+                    // Check: view itself → subviews → ancestors
+                    var uiView = platformView as UIKit.UIView;
+                    UIKit.UIScrollView? uiScrollView = uiView as UIKit.UIScrollView;
+                    if (uiScrollView == null)
+                        uiScrollView = FindNativeDescendant<UIKit.UIScrollView>(uiView);
+                    if (uiScrollView == null)
+                        uiScrollView = FindNativeAncestor<UIKit.UIScrollView>(uiView);
+                    if (uiScrollView != null)
+                    {
+                        var offset = uiScrollView.ContentOffset;
+                        var newX = Math.Max(0, Math.Min(offset.X + deltaX, uiScrollView.ContentSize.Width - uiScrollView.Bounds.Width));
+                        var newY = Math.Max(0, Math.Min(offset.Y - deltaY, uiScrollView.ContentSize.Height - uiScrollView.Bounds.Height));
+                        uiScrollView.SetContentOffset(new CoreGraphics.CGPoint(newX, newY), animated: true);
+                        return Task.FromResult(true);
+                    }
+#elif ANDROID
+                    // Check: view itself → descendants → ancestors
+                    var androidView = platformView as Android.Views.View;
+                    var recyclerView = androidView as AndroidX.RecyclerView.Widget.RecyclerView;
+                    if (recyclerView == null)
+                        recyclerView = FindNativeDescendantAndroid<AndroidX.RecyclerView.Widget.RecyclerView>(androidView);
+                    if (recyclerView == null)
+                        recyclerView = FindNativeAncestorAndroid<AndroidX.RecyclerView.Widget.RecyclerView>(androidView);
+                    if (recyclerView != null)
+                    {
+                        recyclerView.ScrollBy((int)deltaX, (int)-deltaY);
+                        return Task.FromResult(true);
+                    }
+                    var androidScrollView = androidView as Android.Widget.ScrollView;
+                    if (androidScrollView == null)
+                        androidScrollView = FindNativeDescendantAndroid<Android.Widget.ScrollView>(androidView);
+                    if (androidScrollView == null)
+                        androidScrollView = FindNativeAncestorAndroid<Android.Widget.ScrollView>(androidView);
+                    if (androidScrollView != null)
+                    {
+                        androidScrollView.ScrollBy((int)deltaX, (int)-deltaY);
+                        return Task.FromResult(true);
+                    }
+#elif WINDOWS
+                    // Check: view itself → descendants → ancestors
+                    var winView = platformView as Microsoft.UI.Xaml.DependencyObject;
+                    var scrollViewer = winView as Microsoft.UI.Xaml.Controls.ScrollViewer;
+                    if (scrollViewer == null)
+                        scrollViewer = FindWinUIDescendant<Microsoft.UI.Xaml.Controls.ScrollViewer>(winView);
+                    if (scrollViewer == null)
+                        scrollViewer = FindWinUIScrollViewer(winView);
+                    if (scrollViewer != null)
+                    {
+                        scrollViewer.ChangeView(
+                            scrollViewer.HorizontalOffset + deltaX,
+                            scrollViewer.VerticalOffset - deltaY,
+                            null);
+                        return Task.FromResult(true);
+                    }
+#endif
+                }
+                target = target.Parent as VisualElement;
+            }
+        }
+        catch { }
+        return Task.FromResult(false);
+    }
+
+#if IOS || MACCATALYST
+    private static T? FindNativeAncestor<T>(UIKit.UIView? view) where T : UIKit.UIView
+    {
+        var current = view;
+        while (current != null)
+        {
+            if (current is T match) return match;
+            current = current.Superview;
+        }
+        return null;
+    }
+
+    private static T? FindNativeDescendant<T>(UIKit.UIView? view) where T : UIKit.UIView
+    {
+        if (view == null) return null;
+        if (view is T match) return match;
+        foreach (var subview in view.Subviews)
+        {
+            var found = FindNativeDescendant<T>(subview);
+            if (found != null) return found;
+        }
+        return null;
+    }
+#elif ANDROID
+    private static T? FindNativeAncestorAndroid<T>(Android.Views.View? view) where T : Android.Views.View
+    {
+        var current = view;
+        while (current != null)
+        {
+            if (current is T match) return match;
+            current = current.Parent as Android.Views.View;
+        }
+        return null;
+    }
+
+    private static T? FindNativeDescendantAndroid<T>(Android.Views.View? view) where T : Android.Views.View
+    {
+        if (view == null) return null;
+        if (view is T match) return match;
+        if (view is Android.Views.ViewGroup vg)
+        {
+            for (var i = 0; i < vg.ChildCount; i++)
+            {
+                var found = FindNativeDescendantAndroid<T>(vg.GetChildAt(i));
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+#elif WINDOWS
+    private static Microsoft.UI.Xaml.Controls.ScrollViewer? FindWinUIScrollViewer(Microsoft.UI.Xaml.DependencyObject? obj)
+    {
+        if (obj == null) return null;
+        if (obj is Microsoft.UI.Xaml.Controls.ScrollViewer sv) return sv;
+        // Walk up the visual tree
+        var parent = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(obj);
+        while (parent != null)
+        {
+            if (parent is Microsoft.UI.Xaml.Controls.ScrollViewer scrollViewer)
+                return scrollViewer;
+            parent = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(parent);
+        }
+        // Also search children (CollectionView wraps a ScrollViewer internally)
+        return FindWinUIDescendant<Microsoft.UI.Xaml.Controls.ScrollViewer>(obj);
+    }
+
+    private static T? FindWinUIDescendant<T>(Microsoft.UI.Xaml.DependencyObject? parent) where T : Microsoft.UI.Xaml.DependencyObject
+    {
+        if (parent == null) return null;
+        if (parent is T match) return match;
+        var count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(parent);
+        for (var i = 0; i < count; i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(parent, i);
+            if (child is T found) return found;
+            var descendant = FindWinUIDescendant<T>(child);
+            if (descendant != null) return descendant;
+        }
+        return null;
+    }
+#endif
+
     protected override bool TryNativeTap(VisualElement ve)
     {
         try

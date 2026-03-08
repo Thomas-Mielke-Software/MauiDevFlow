@@ -177,6 +177,19 @@ public class DevFlowAgentService : IDisposable
     /// <summary>Device idiom for status reporting. Override for platforms without DeviceInfo.</summary>
     protected virtual string IdiomName => DeviceInfo.Current.Idiom.ToString();
 
+    /// <summary>
+    /// Gets the display density (scale factor) for a specific window. Returns 1.0 for standard,
+    /// 2.0 for @2x (Retina), 3.0 for @3x (iPhone Pro Max), etc.
+    /// Used to auto-scale screenshots to 1x logical resolution.
+    /// Override in platform-specific agents to query the native window's actual screen density,
+    /// which may vary across displays in multi-monitor setups.
+    /// </summary>
+    protected virtual double GetWindowDisplayDensity(IWindow? window)
+    {
+        try { return DeviceDisplay.MainDisplayInfo.Density; }
+        catch { return 1.0; }
+    }
+
     /// <summary>Gets native window dimensions when MAUI reports 0. Override for platform-specific access.</summary>
     protected virtual (double width, double height) GetNativeWindowSize(IWindow window) => (0, 0);
 
@@ -292,6 +305,7 @@ public class DevFlowAgentService : IDisposable
                 platform = PlatformName,
                 deviceType = DeviceTypeName,
                 idiom = IdiomName,
+                displayDensity = GetWindowDisplayDensity(window),
                 appName = _app?.GetType().Assembly.GetName().Name ?? "unknown",
                 running = _app != null,
                 cdpReady = _cdpWebViews.Any(w => w.IsReady),
@@ -547,6 +561,26 @@ public class DevFlowAgentService : IDisposable
     {
         if (_app == null) return HttpResponse.Error("Agent not bound to app");
 
+        int? maxWidth = null;
+        if (request.QueryParams.TryGetValue("maxWidth", out var mwStr) && int.TryParse(mwStr, out var mw) && mw > 0)
+            maxWidth = mw;
+
+        // Auto-scale to 1x by default on HiDPI displays. Override with scale=native to keep full resolution.
+        bool autoScale = true;
+        if (request.QueryParams.TryGetValue("scale", out var scaleParam))
+        {
+            autoScale = !scaleParam.Equals("native", StringComparison.OrdinalIgnoreCase)
+                     && !scaleParam.Equals("full", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Resolve the target window and its display density on the UI thread
+        var windowIndex = ParseWindowIndex(request);
+        var density = await DispatchAsync(() =>
+        {
+            var w = GetWindow(windowIndex);
+            return GetWindowDisplayDensity(w);
+        });
+
         // Check for fullscreen mode (captures all windows including dialogs)
         if (request.QueryParams.TryGetValue("fullscreen", out var fs) &&
             fs.Equals("true", StringComparison.OrdinalIgnoreCase))
@@ -555,7 +589,7 @@ public class DevFlowAgentService : IDisposable
             {
                 var pngData = await CaptureFullScreenAsync();
                 if (pngData != null)
-                    return HttpResponse.Png(pngData);
+                    return HttpResponse.Png(ResizePngIfNeeded(pngData, maxWidth, density, autoScale));
                 return HttpResponse.Error("Full-screen capture not supported on this platform");
             }
             catch (Exception ex)
@@ -582,7 +616,7 @@ public class DevFlowAgentService : IDisposable
                 if (pngData == null)
                     return HttpResponse.Error($"Capture returned null for element '{elementId}'");
 
-                return HttpResponse.Png(pngData);
+                return HttpResponse.Png(ResizePngIfNeeded(pngData, maxWidth, density, autoScale));
             }
             catch (Exception ex)
             {
@@ -617,7 +651,7 @@ public class DevFlowAgentService : IDisposable
                 if (pngData == null)
                     return HttpResponse.Error($"Capture returned null for element '{matchId}'");
 
-                return HttpResponse.Png(pngData);
+                return HttpResponse.Png(ResizePngIfNeeded(pngData, maxWidth, density, autoScale));
             }
             catch (FormatException ex)
             {
@@ -631,7 +665,6 @@ public class DevFlowAgentService : IDisposable
 
         try
         {
-            var windowIndex = ParseWindowIndex(request);
             var pngData = await DispatchAsync(async () =>
             {
                 var window = GetWindow(windowIndex);
@@ -673,7 +706,7 @@ public class DevFlowAgentService : IDisposable
             if (pngData == null)
                 return HttpResponse.Error("Failed to capture screenshot");
 
-            return HttpResponse.Png(pngData);
+            return HttpResponse.Png(ResizePngIfNeeded(pngData, maxWidth, density, autoScale));
         }
         catch (Exception ex)
         {
@@ -707,6 +740,49 @@ public class DevFlowAgentService : IDisposable
     protected virtual Task<byte[]?> CaptureFullScreenAsync()
     {
         return Task.FromResult<byte[]?>(null);
+    }
+
+    /// <summary>
+    /// Resizes a PNG image based on display density and/or max width constraint.
+    /// By default, HiDPI screenshots are scaled to 1x logical resolution (e.g., a 3x iPhone
+    /// screenshot of 1290px becomes 430px). An explicit maxWidth overrides density scaling.
+    /// </summary>
+    private static byte[] ResizePngIfNeeded(byte[] pngData, int? maxWidth, double density = 1.0, bool autoScale = true)
+    {
+        // Determine target width: explicit maxWidth takes priority, then auto-scale by density
+        int? targetWidth = maxWidth;
+        if (targetWidth == null && autoScale && density > 1.0)
+        {
+            try
+            {
+                using var probe = SkiaSharp.SKBitmap.Decode(pngData);
+                if (probe != null)
+                    targetWidth = (int)(probe.Width / density);
+            }
+            catch { return pngData; }
+        }
+
+        if (targetWidth == null || targetWidth <= 0) return pngData;
+
+        try
+        {
+            using var original = SkiaSharp.SKBitmap.Decode(pngData);
+            if (original == null || original.Width <= targetWidth.Value) return pngData;
+
+            var scale = (float)targetWidth.Value / original.Width;
+            var newHeight = (int)(original.Height * scale);
+
+            using var resized = original.Resize(new SkiaSharp.SKImageInfo(targetWidth.Value, newHeight), SkiaSharp.SKFilterQuality.Medium);
+            if (resized == null) return pngData;
+
+            using var image = SkiaSharp.SKImage.FromBitmap(resized);
+            using var encoded = image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
+            return encoded.ToArray();
+        }
+        catch
+        {
+            return pngData;
+        }
     }
 
     private async Task<HttpResponse> HandleProperty(HttpRequest request)
@@ -1230,9 +1306,43 @@ public class DevFlowAgentService : IDisposable
         if (body == null)
             return HttpResponse.Error("Request body is required");
 
+        var position = ParseScrollToPosition(body.ScrollToPosition);
+
         var result = await DispatchAsync(async () =>
         {
-            // If elementId is given, find the nearest ScrollView ancestor and scroll to that element
+            // Priority 1: Scroll by item index on a specific ItemsView
+            if (body.ItemIndex.HasValue)
+            {
+                object? targetObj = null;
+                if (!string.IsNullOrEmpty(body.ElementId))
+                {
+                    targetObj = _treeWalker.GetElementById(body.ElementId, _app);
+                    if (targetObj == null) return "Element not found";
+                }
+
+                // Find the ItemsView — either the target itself or its ancestor
+                var itemsView = targetObj as ItemsView ?? (targetObj is VisualElement tve ? FindAncestor<ItemsView>(tve) : null);
+                // Since ListView inherits from ItemsView in .NET 10+, ItemsView check covers both
+                if (itemsView == null && targetObj == null)
+                {
+                    // No element specified — find first ItemsView on the page
+                    var window = GetWindow(ParseWindowIndex(request));
+                    if (window?.Page != null)
+                        itemsView = FindDescendant<ItemsView>(window.Page);
+                }
+
+                if (itemsView != null)
+                {
+                    await ScrollWithTimeoutAsync(
+                        () => { itemsView.ScrollTo(body.ItemIndex.Value, body.GroupIndex ?? -1, position, body.Animated); return Task.CompletedTask; },
+                        () => { itemsView.ScrollTo(body.ItemIndex.Value, body.GroupIndex ?? -1, position, false); return Task.CompletedTask; });
+                    return "ok";
+                }
+
+                return "No CollectionView or ListView found for item-index scroll";
+            }
+
+            // Priority 2: Scroll element into view
             if (!string.IsNullOrEmpty(body.ElementId))
             {
                 var el = _treeWalker.GetElementById(body.ElementId, _app);
@@ -1240,47 +1350,152 @@ public class DevFlowAgentService : IDisposable
 
                 if (el is VisualElement ve)
                 {
-                    // Find the nearest ScrollView ancestor
+                    // 2a: Check for ItemsView ancestor — use BindingContext to find item index
+                    var ancestorItemsView = FindAncestor<ItemsView>(ve);
+                    if (ancestorItemsView != null && ve.BindingContext != null)
+                    {
+                        var index = GetItemIndex(ancestorItemsView.ItemsSource, ve.BindingContext);
+                        if (index >= 0)
+                        {
+                            await ScrollWithTimeoutAsync(
+                                () => { ancestorItemsView.ScrollTo(index, position: position, animate: body.Animated); return Task.CompletedTask; },
+                                () => { ancestorItemsView.ScrollTo(index, position: position, animate: false); return Task.CompletedTask; });
+                            return "ok";
+                        }
+                    }
+
+                    // 2b: Check for ScrollView ancestor (existing behavior)
                     var scrollView = FindAncestor<ScrollView>(ve);
                     if (scrollView != null)
                     {
                         await ScrollWithTimeoutAsync(
-                            () => scrollView.ScrollToAsync(ve, ScrollToPosition.MakeVisible, body.Animated),
-                            () => scrollView.ScrollToAsync(ve, ScrollToPosition.MakeVisible, false));
+                            () => scrollView.ScrollToAsync(ve, (ScrollToPosition)position, body.Animated),
+                            () => scrollView.ScrollToAsync(ve, (ScrollToPosition)position, false));
                         return "ok";
                     }
 
-                    // Maybe the element itself is a ScrollView
-                    if (el is ScrollView sv)
+                    // 2d: Element is itself a scrollable view — apply delta
+                    if (el is ScrollView sv && (body.DeltaX != 0 || body.DeltaY != 0))
                     {
+                        var newX = Math.Max(0, sv.ScrollX + body.DeltaX);
+                        var newY = Math.Max(0, sv.ScrollY + body.DeltaY);
                         await ScrollWithTimeoutAsync(
-                            () => sv.ScrollToAsync(body.DeltaX, body.DeltaY, body.Animated),
-                            () => sv.ScrollToAsync(body.DeltaX, body.DeltaY, false));
+                            () => sv.ScrollToAsync(newX, newY, body.Animated),
+                            () => sv.ScrollToAsync(newX, newY, false));
                         return "ok";
+                    }
+
+                    // 2e: Element is an ItemsView — apply delta via native scroll
+                    if (el is ItemsView && (body.DeltaX != 0 || body.DeltaY != 0))
+                    {
+                        if (await TryNativeScroll(ve, body.DeltaX, body.DeltaY))
+                            return "ok";
+                        return $"Native scroll not supported on this platform for {el.GetType().Name}";
+                    }
+
+                    // 2f: Try native scroll as final fallback
+                    if (body.DeltaX != 0 || body.DeltaY != 0)
+                    {
+                        if (await TryNativeScroll(ve, body.DeltaX, body.DeltaY))
+                            return "ok";
                     }
                 }
 
-                return $"No ScrollView ancestor found for element '{body.ElementId}'";
+                return $"No scrollable ancestor found for element '{body.ElementId}'";
             }
 
-            // Otherwise scroll by delta on the first ScrollView we find
-            var window = GetWindow(ParseWindowIndex(request));
-            if (window?.Page == null) return "No page available";
+            // Priority 3: Delta scroll with no element — find first scrollable on current page
+            var pageWindow = GetWindow(ParseWindowIndex(request));
+            if (pageWindow?.Page == null) return "No page available";
 
-            var targetScroll = FindDescendant<ScrollView>(window.Page);
-            if (targetScroll == null) return "No ScrollView found on page";
+            // Use the current visible page (Shell.CurrentPage or the window page)
+            var currentPage = (pageWindow.Page as Shell)?.CurrentPage ?? pageWindow.Page;
 
-            var newX = targetScroll.ScrollX + body.DeltaX;
-            var newY = targetScroll.ScrollY + body.DeltaY;
-            var x = Math.Max(0, newX);
-            var y = Math.Max(0, newY);
-            await ScrollWithTimeoutAsync(
-                () => targetScroll.ScrollToAsync(x, y, body.Animated),
-                () => targetScroll.ScrollToAsync(x, y, false));
-            return "ok";
+            // 3a: Try ItemsView via native scroll first (CollectionView/ListView are more common scroll targets)
+            var targetItemsView = FindDescendant<ItemsView>(currentPage);
+            if (targetItemsView is VisualElement ive)
+            {
+                if (await TryNativeScroll(ive, body.DeltaX, body.DeltaY))
+                    return "ok";
+            }
+
+            // 3b: Try ScrollView on current page
+            var targetScroll = FindDescendant<ScrollView>(currentPage);
+            if (targetScroll != null)
+            {
+                var newX = targetScroll.ScrollX + body.DeltaX;
+                var newY = targetScroll.ScrollY + body.DeltaY;
+                var x = Math.Max(0, newX);
+                var y = Math.Max(0, newY);
+                await ScrollWithTimeoutAsync(
+                    () => targetScroll.ScrollToAsync(x, y, body.Animated),
+                    () => targetScroll.ScrollToAsync(x, y, false));
+                return "ok";
+            }
+
+            return "No scrollable view found on page";
         });
 
         return result == "ok" ? HttpResponse.Ok("Scrolled") : HttpResponse.Error(result ?? "Scroll failed");
+    }
+
+    /// <summary>
+    /// Parse a ScrollToPosition string to the MAUI enum value.
+    /// </summary>
+    private static ScrollToPosition ParseScrollToPosition(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return ScrollToPosition.MakeVisible;
+        return value.ToLowerInvariant() switch
+        {
+            "start" => ScrollToPosition.Start,
+            "center" => ScrollToPosition.Center,
+            "end" => ScrollToPosition.End,
+            "makevisible" => ScrollToPosition.MakeVisible,
+            _ => ScrollToPosition.MakeVisible
+        };
+    }
+
+    /// <summary>
+    /// Get item from an IEnumerable by index.
+    /// </summary>
+    private static object? GetItemByIndex(System.Collections.IEnumerable? source, int index)
+    {
+        if (source == null) return null;
+        if (source is System.Collections.IList list && index >= 0 && index < list.Count)
+            return list[index];
+        var i = 0;
+        foreach (var item in source)
+        {
+            if (i == index) return item;
+            i++;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Find the index of an item in an IEnumerable by reference or equality.
+    /// </summary>
+    private static int GetItemIndex(System.Collections.IEnumerable? source, object item)
+    {
+        if (source == null) return -1;
+        if (source is System.Collections.IList list)
+            return list.IndexOf(item);
+        var i = 0;
+        foreach (var obj in source)
+        {
+            if (ReferenceEquals(obj, item) || Equals(obj, item)) return i;
+            i++;
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// Try to scroll a native view by pixel delta. Override in platform-specific subclasses.
+    /// Returns true if the scroll was handled natively.
+    /// </summary>
+    protected virtual Task<bool> TryNativeScroll(VisualElement element, double deltaX, double deltaY)
+    {
+        return Task.FromResult(false);
     }
 
     /// <summary>
@@ -1711,4 +1926,7 @@ public class ScrollRequest
     public double DeltaX { get; set; }
     public double DeltaY { get; set; }
     public bool Animated { get; set; } = true;
+    public int? ItemIndex { get; set; }
+    public int? GroupIndex { get; set; }
+    public string? ScrollToPosition { get; set; }
 }
