@@ -267,19 +267,7 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
     /// <summary>Gets native window dimensions when MAUI reports 0. Override for platform-specific access.</summary>
     protected virtual (double width, double height) GetNativeWindowSize(IWindow window) => (0, 0);
 
-    protected virtual bool IsProfilerSupportedInBuild
-    {
-        get
-        {
-#if DEBUG
-            return true;
-#else
-            return false;
-#endif
-        }
-    }
-
-    private bool IsProfilerFeatureAvailable => _options.EnableProfiler && IsProfilerSupportedInBuild;
+    private bool IsProfilerFeatureAvailable => _options.EnableProfiler;
 
     /// <summary>
     /// Sets the file log provider for serving logs via the API.
@@ -1759,7 +1747,7 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         return new
         {
             available = IsProfilerFeatureAvailable,
-            supportedInBuild = IsProfilerSupportedInBuild,
+            supportedInBuild = true,
             featureEnabled = _options.EnableProfiler,
             platform = capabilities.Platform,
             managedMemorySupported = capabilities.ManagedMemorySupported,
@@ -1779,8 +1767,6 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
 
     private async Task<HttpResponse> HandleProfilerStart(HttpRequest request)
     {
-        if (!IsProfilerSupportedInBuild)
-            return HttpResponse.Error("Profiler is only available in DEBUG builds");
         if (!_options.EnableProfiler)
             return HttpResponse.Error("Profiler is disabled. Set AgentOptions.EnableProfiler=true");
 

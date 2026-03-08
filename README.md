@@ -285,7 +285,7 @@ auto-assigned by the broker (range 10223–10899), or configurable via `.mauidev
 | `/api/cdp` | POST | Forward CDP command to Blazor WebView. Use `?webview=<id>` to target a specific WebView |
 | `/api/cdp/webviews` | GET | List registered CDP WebViews (index, AutomationId, elementId, ready status) |
 | `/api/cdp/source` | GET | Get page HTML source. Use `?webview=<id>` to target a specific WebView |
-| `/api/profiler/capabilities` | GET | Profiling capability matrix and availability (DEBUG + feature flag) |
+| `/api/profiler/capabilities` | GET | Profiling capability matrix and availability (`EnableProfiler`) |
 | `/api/profiler/start` | POST | Start profiling session. Optional body: `{"sampleIntervalMs":500}` |
 | `/api/profiler/stop` | POST | Stop active profiling session |
 | `/api/profiler/samples?sampleCursor=S&markerCursor=M&spanCursor=P&limit=N` | GET | Poll sample + marker + span batch since cursors |

@@ -78,7 +78,6 @@ public class AgentOptions
 
     /// <summary>
     /// Enables runtime profiling endpoints and sampling. Default: false.
-    /// Profiling is additionally gated to DEBUG builds.
     /// </summary>
     public bool EnableProfiler { get; set; } = false;
 
