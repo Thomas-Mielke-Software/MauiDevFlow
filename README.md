@@ -75,7 +75,6 @@ var builder = MauiApp.CreateBuilder();
 #if DEBUG
 builder.Services.AddBlazorWebViewDeveloperTools();
 builder.AddMauiDevFlowAgent();
-// Or use builder.AddMauiDevFlowProfiling() to enable profiler endpoints by default
 builder.AddMauiBlazorDevFlowTools(); // Blazor Hybrid only
 #endif
 ```
