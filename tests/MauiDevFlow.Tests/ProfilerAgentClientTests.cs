@@ -67,8 +67,21 @@ public class ProfilerAgentClientTests
                           "name": "//native"
                         }
                       ],
+                      "spans": [
+                        {
+                          "spanId": "sp-1",
+                          "startTsUtc": "2026-01-01T00:00:00.300Z",
+                          "endTsUtc": "2026-01-01T00:00:00.340Z",
+                          "durationMs": 40.0,
+                          "kind": "ui.operation",
+                          "name": "action.scroll",
+                          "status": "ok",
+                          "threadId": 12
+                        }
+                      ],
                       "sampleCursor": 1,
                       "markerCursor": 1,
+                      "spanCursor": 1,
                       "isActive": true
                     }
                     """;
@@ -108,8 +121,10 @@ public class ProfilerAgentClientTests
         Assert.Equal("s-1", batch.SessionId);
         Assert.Single(batch.Samples);
         Assert.Single(batch.Markers);
+        Assert.Single(batch.Spans);
         Assert.Equal(1, batch.SampleCursor);
         Assert.Equal(1, batch.MarkerCursor);
+        Assert.Equal(1, batch.SpanCursor);
 
         var stopped = await client.StopProfilerAsync();
         Assert.NotNull(stopped);

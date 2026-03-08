@@ -226,9 +226,10 @@ public class AgentClient : IDisposable
     public async Task<ProfilerBatch?> GetProfilerSamplesAsync(
         long sampleCursor = 0,
         long markerCursor = 0,
+        long spanCursor = 0,
         int limit = 500)
     {
-        var url = $"/api/profiler/samples?sampleCursor={sampleCursor}&markerCursor={markerCursor}&limit={limit}";
+        var url = $"/api/profiler/samples?sampleCursor={sampleCursor}&markerCursor={markerCursor}&spanCursor={spanCursor}&limit={limit}";
         return await GetAsync<ProfilerBatch>(url);
     }
 
@@ -238,6 +239,20 @@ public class AgentClient : IDisposable
         string? payloadJson = null)
     {
         return await PostActionAsync("/api/profiler/marker", new { name, type, payloadJson });
+    }
+
+    public async Task<List<ProfilerHotspot>> GetProfilerHotspotsAsync(
+        int limit = 20,
+        int minDurationMs = 16,
+        string? kind = null)
+    {
+        limit = Math.Clamp(limit, 1, 200);
+        minDurationMs = Math.Clamp(minDurationMs, 0, 60_000);
+
+        var path = $"/api/profiler/hotspots?limit={limit}&minDurationMs={minDurationMs}";
+        if (!string.IsNullOrWhiteSpace(kind))
+            path += $"&kind={Uri.EscapeDataString(kind)}";
+        return await GetAsync<List<ProfilerHotspot>>(path) ?? new();
     }
 
     private async Task<T?> GetAsync<T>(string path) where T : class
@@ -473,12 +488,68 @@ public class ProfilerBatch
     public List<ProfilerSample> Samples { get; set; } = new();
     [System.Text.Json.Serialization.JsonPropertyName("markers")]
     public List<ProfilerMarker> Markers { get; set; } = new();
+    [System.Text.Json.Serialization.JsonPropertyName("spans")]
+    public List<ProfilerSpan> Spans { get; set; } = new();
     [System.Text.Json.Serialization.JsonPropertyName("sampleCursor")]
     public long SampleCursor { get; set; }
     [System.Text.Json.Serialization.JsonPropertyName("markerCursor")]
     public long MarkerCursor { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("spanCursor")]
+    public long SpanCursor { get; set; }
     [System.Text.Json.Serialization.JsonPropertyName("isActive")]
     public bool IsActive { get; set; }
+}
+
+public class ProfilerSpan
+{
+    [System.Text.Json.Serialization.JsonPropertyName("spanId")]
+    public string SpanId { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("parentSpanId")]
+    public string? ParentSpanId { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("traceId")]
+    public string? TraceId { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("startTsUtc")]
+    public DateTime StartTsUtc { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("endTsUtc")]
+    public DateTime EndTsUtc { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("durationMs")]
+    public double DurationMs { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("kind")]
+    public string Kind { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("status")]
+    public string Status { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("threadId")]
+    public int? ThreadId { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("screen")]
+    public string? Screen { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("elementPath")]
+    public string? ElementPath { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("tagsJson")]
+    public string? TagsJson { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("error")]
+    public string? Error { get; set; }
+}
+
+public class ProfilerHotspot
+{
+    [System.Text.Json.Serialization.JsonPropertyName("kind")]
+    public string Kind { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("screen")]
+    public string? Screen { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("count")]
+    public int Count { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("errorCount")]
+    public int ErrorCount { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("avgDurationMs")]
+    public double AvgDurationMs { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("p95DurationMs")]
+    public double P95DurationMs { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("maxDurationMs")]
+    public double MaxDurationMs { get; set; }
 }
 
 public class ProfilerCapabilities

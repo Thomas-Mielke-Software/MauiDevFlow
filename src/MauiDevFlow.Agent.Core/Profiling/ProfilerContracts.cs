@@ -36,9 +36,57 @@ public class ProfilerBatch
     public string SessionId { get; set; } = "";
     public List<ProfilerSample> Samples { get; set; } = new();
     public List<ProfilerMarker> Markers { get; set; } = new();
+    public List<ProfilerSpan> Spans { get; set; } = new();
     public long SampleCursor { get; set; }
     public long MarkerCursor { get; set; }
+    public long SpanCursor { get; set; }
     public bool IsActive { get; set; }
+}
+
+public class ProfilerSpan
+{
+    public string SpanId { get; set; } = Guid.NewGuid().ToString("N");
+    public string? ParentSpanId { get; set; }
+    public string? TraceId { get; set; }
+    public DateTime StartTsUtc { get; set; }
+    public DateTime EndTsUtc { get; set; }
+    public double DurationMs { get; set; }
+    public string Kind { get; set; } = "ui.operation";
+    public string Name { get; set; } = "";
+    public string Status { get; set; } = "ok";
+    public int? ThreadId { get; set; }
+    public string? Screen { get; set; }
+    public string? ElementPath { get; set; }
+    public string? TagsJson { get; set; }
+    public string? Error { get; set; }
+}
+
+public class ProfilerHotspot
+{
+    public string Kind { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string? Screen { get; set; }
+    public int Count { get; set; }
+    public int ErrorCount { get; set; }
+    public double AvgDurationMs { get; set; }
+    public double P95DurationMs { get; set; }
+    public double MaxDurationMs { get; set; }
+}
+
+public class PublishProfilerSpanRequest
+{
+    public string? Kind { get; set; }
+    public string? Name { get; set; }
+    public string? Status { get; set; }
+    public string? ParentSpanId { get; set; }
+    public string? TraceId { get; set; }
+    public DateTime? StartTsUtc { get; set; }
+    public DateTime? EndTsUtc { get; set; }
+    public int? ThreadId { get; set; }
+    public string? Screen { get; set; }
+    public string? ElementPath { get; set; }
+    public string? TagsJson { get; set; }
+    public string? Error { get; set; }
 }
 
 public class ProfilerCapabilities

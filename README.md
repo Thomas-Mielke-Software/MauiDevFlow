@@ -80,7 +80,9 @@ builder.AddMauiBlazorDevFlowTools(); // Blazor Hybrid only
 #endif
 ```
 
-**Agent options:** `Port` (default 9223), `Enabled` (default true), `MaxTreeDepth` (0 = unlimited), `EnableProfiler` (default false), `ProfilerSampleIntervalMs` (default 500), `MaxProfilerSamples` (default 20000), `MaxProfilerMarkers` (default 20000). Port is also configurable via `.mauidevflow` or `-p:MauiDevFlowPort=XXXX`.
+**Agent options:** `Port` (default 9223), `Enabled` (default true), `MaxTreeDepth` (0 = unlimited), `EnableProfiler` (default false), `ProfilerSampleIntervalMs` (default 500), `MaxProfilerSamples` (default 20000), `MaxProfilerMarkers` (default 20000), `MaxProfilerSpans` (default 20000). Port is also configurable via `.mauidevflow` or `-p:MauiDevFlowPort=XXXX`.
+
+With `EnableProfiler=true`, the agent also auto-instruments common MAUI UI interactions (button/image button clicks, tap gestures, picker/list selection, entry completion, search submit, page appearing/disappearing), Shell navigation milestones (`navigation.start`, `navigation.shell.completed`, `navigation.to-page-appearing`, `navigation.to-first-layout`), first layout spans (`ui.page.first-layout`, `ui.render.first-layout`), and scroll batches (`ui.scroll.batch`) so profiler output reflects real runtime UI behavior, not only DevFlow API actions.
 
 **Blazor options:** `Enabled` (default true), `EnableWebViewInspection` (default true), `EnableLogging` (default true in DEBUG). CDP commands are routed through the agent port — no separate Blazor port needed.
 
@@ -286,8 +288,10 @@ auto-assigned by the broker (range 10223–10899), or configurable via `.mauidev
 | `/api/profiler/capabilities` | GET | Profiling capability matrix and availability (DEBUG + feature flag) |
 | `/api/profiler/start` | POST | Start profiling session. Optional body: `{"sampleIntervalMs":500}` |
 | `/api/profiler/stop` | POST | Stop active profiling session |
-| `/api/profiler/samples?sampleCursor=S&markerCursor=M&limit=N` | GET | Poll sample + marker batch since cursors |
+| `/api/profiler/samples?sampleCursor=S&markerCursor=M&spanCursor=P&limit=N` | GET | Poll sample + marker + span batch since cursors |
 | `/api/profiler/marker` | POST | Publish manual marker `{"type":"user.action","name":"...","payloadJson":"..."}` |
+| `/api/profiler/span` | POST | Publish manual span `{"kind":"ui.operation","name":"...","startTsUtc":"...","endTsUtc":"..."}` |
+| `/api/profiler/hotspots?kind=ui.operation&minDurationMs=16&limit=20` | GET | Aggregated slow-operation hotspots ordered by P95 duration |
 
 ## Project Structure
 

@@ -15,6 +15,7 @@ public class ProfilerCoreTests
             IsActive = true,
             SampleCursor = 2,
             MarkerCursor = 3,
+            SpanCursor = 4,
             Samples = new()
             {
                 new ProfilerSample
@@ -41,6 +42,19 @@ public class ProfilerCoreTests
                     Name = "//native",
                     PayloadJson = """{"route":"//native"}"""
                 }
+            },
+            Spans = new()
+            {
+                new ProfilerSpan
+                {
+                    SpanId = "span-1",
+                    StartTsUtc = now,
+                    EndTsUtc = now.AddMilliseconds(18),
+                    DurationMs = 18,
+                    Kind = "ui.operation",
+                    Name = "action.tap",
+                    Status = "ok"
+                }
             }
         };
 
@@ -52,7 +66,9 @@ public class ProfilerCoreTests
         Assert.True(parsed.IsActive);
         Assert.Single(parsed.Samples);
         Assert.Single(parsed.Markers);
+        Assert.Single(parsed.Spans);
         Assert.Equal("navigation.start", parsed.Markers[0].Type);
+        Assert.Equal(4, parsed.SpanCursor);
         Assert.Equal(123_456, parsed.Samples[0].ManagedBytes);
     }
 
@@ -77,7 +93,7 @@ public class ProfilerCoreTests
     [Fact]
     public void ProfilerSessionStore_EnforcesMonotonicMarkerTimestamps()
     {
-        var store = new ProfilerSessionStore(100, 100);
+        var store = new ProfilerSessionStore(100, 100, 100);
         store.Start(500);
 
         var now = DateTime.UtcNow;
@@ -89,6 +105,43 @@ public class ProfilerCoreTests
         Assert.Equal(2, batch.Markers.Count);
         Assert.True(batch.Markers[1].TsUtc > batch.Markers[0].TsUtc);
         Assert.Equal("second", batch.Markers[1].Name);
+    }
+
+    [Fact]
+    public void ProfilerSessionStore_HotspotsAggregateSpanDurations()
+    {
+        var store = new ProfilerSessionStore(100, 100, 100);
+        store.Start(500);
+        var now = DateTime.UtcNow;
+
+        store.AddSpan(new ProfilerSpan
+        {
+            SpanId = "s1",
+            StartTsUtc = now,
+            EndTsUtc = now.AddMilliseconds(40),
+            Kind = "ui.operation",
+            Name = "action.scroll",
+            Status = "ok",
+            Screen = "//feed"
+        });
+        store.AddSpan(new ProfilerSpan
+        {
+            SpanId = "s2",
+            StartTsUtc = now.AddMilliseconds(50),
+            EndTsUtc = now.AddMilliseconds(120),
+            Kind = "ui.operation",
+            Name = "action.scroll",
+            Status = "error",
+            Screen = "//feed"
+        });
+
+        var hotspots = store.GetHotspots(limit: 5, minDurationMs: 16, kind: "ui.operation");
+
+        Assert.Single(hotspots);
+        Assert.Equal("action.scroll", hotspots[0].Name);
+        Assert.Equal(2, hotspots[0].Count);
+        Assert.Equal(1, hotspots[0].ErrorCount);
+        Assert.True(hotspots[0].P95DurationMs >= 40);
     }
 
     [Fact]

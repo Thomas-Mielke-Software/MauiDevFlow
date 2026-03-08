@@ -98,4 +98,10 @@ public class AgentOptions
     /// Uses overwrite-on-full ring buffer behavior.
     /// </summary>
     public int MaxProfilerMarkers { get; set; } = 20_000;
+
+    /// <summary>
+    /// Maximum number of profiler spans to keep in memory. Default: 20,000.
+    /// Uses overwrite-on-full ring buffer behavior.
+    /// </summary>
+    public int MaxProfilerSpans { get; set; } = 20_000;
 }
