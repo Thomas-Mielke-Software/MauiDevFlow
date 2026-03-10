@@ -139,6 +139,56 @@ public static class BrokerClient
     /// </summary>
     public static int? ReadBrokerPortPublic() => ReadBrokerPort();
 
+    /// <summary>
+    /// High-level port resolution: ensure broker running → resolve by project → auto-select → config fallback → default.
+    /// Returns the resolved agent port.
+    /// </summary>
+    public static async Task<int?> ResolveAgentPortForProjectAsync()
+    {
+        var brokerPort = ReadBrokerPort() ?? BrokerServer.DefaultPort;
+
+        if (!await IsBrokerAliveAsync(brokerPort))
+        {
+            var started = await EnsureBrokerRunningAsync();
+            if (started.HasValue)
+                brokerPort = started.Value;
+            else
+                return ReadConfigPort() ?? 9223;
+        }
+
+        // Try project-specific resolution
+        var csproj = Directory.GetFiles(Directory.GetCurrentDirectory(), "*.csproj").FirstOrDefault();
+        if (csproj is not null)
+        {
+            var port = await ResolveAgentPortAsync(brokerPort, Path.GetFullPath(csproj));
+            if (port.HasValue) return port.Value;
+        }
+
+        // Try auto-select (single agent)
+        var autoPort = await ResolveAgentPortAsync(brokerPort);
+        if (autoPort.HasValue) return autoPort.Value;
+
+        // No single match — return null so callers can handle multi-agent case
+        return null;
+    }
+
+    /// <summary>
+    /// Read port from .mauidevflow config file in the current directory.
+    /// </summary>
+    public static int? ReadConfigPort()
+    {
+        var configPath = Path.Combine(Directory.GetCurrentDirectory(), ".mauidevflow");
+        if (!File.Exists(configPath)) return null;
+        try
+        {
+            var json = JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(configPath));
+            if (json.TryGetProperty("port", out var portEl) && portEl.TryGetInt32(out var p))
+                return p;
+        }
+        catch { }
+        return null;
+    }
+
     private static void CleanupStaleBroker()
     {
         try

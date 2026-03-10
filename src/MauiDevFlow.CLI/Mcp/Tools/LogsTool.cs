@@ -8,8 +8,6 @@ namespace MauiDevFlow.CLI.Mcp.Tools;
 [McpServerToolType]
 public sealed class LogsTool
 {
-	private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(10) };
-
 	[McpServerTool(Name = "maui_logs"), Description("Retrieve app logs (ILogger output and WebView console logs). Returns structured JSON log entries with timestamp, level, category, and message.")]
 	public static async Task<string> Logs(
 		McpAgentSession session,
@@ -20,11 +18,7 @@ public sealed class LogsTool
 		[Description("Log source filter: native, webview, or all (default: all)")] string? source = null)
 	{
 		var agent = await session.GetAgentClientAsync(agentPort);
-		var url = $"{agent.BaseUrl}/api/logs?limit={limit}&skip={skip}";
-		if (!string.IsNullOrEmpty(source) && source != "all")
-			url += $"&source={source}";
-
-		var response = await _http.GetStringAsync(url);
+		var response = await agent.GetLogsAsync(limit, skip, source);
 
 		if (string.IsNullOrEmpty(minLevel))
 			return response;

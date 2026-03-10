@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Text;
 using System.Text.Json;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
@@ -11,8 +10,6 @@ namespace MauiDevFlow.CLI.Mcp.Tools;
 [McpServerToolType]
 public sealed class CdpTools
 {
-    private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
-
     [McpServerTool(Name = "maui_cdp_evaluate"), Description("Execute JavaScript in a Blazor WebView via Chrome DevTools Protocol. Returns the evaluation result.")]
     public static async Task<string> CdpEvaluate(
         McpAgentSession session,
@@ -21,33 +18,23 @@ public sealed class CdpTools
         [Description("Agent HTTP port (optional if only one agent connected)")] int? agentPort = null)
     {
         var agent = await session.GetAgentClientAsync(agentPort);
-        var url = $"{agent.BaseUrl}/api/cdp";
-        if (webviewId != null)
-            url += $"?webview={Uri.EscapeDataString(webviewId)}";
-
-        var body = JsonSerializer.Serialize(new
-        {
-            method = "Runtime.evaluate",
-            @params = new { expression, returnByValue = true }
-        });
-
-        var response = await _http.PostAsync(url, new StringContent(body, Encoding.UTF8, "application/json"));
-        var content = await response.Content.ReadAsStringAsync();
+        var paramsEl = JsonSerializer.Deserialize<JsonElement>(
+            JsonSerializer.Serialize(new { expression, returnByValue = true }));
+        var content = await agent.SendCdpCommandAsync("Runtime.evaluate", paramsEl, webviewId);
 
         try
         {
-            var json = JsonSerializer.Deserialize<JsonElement>(content);
-            if (json.TryGetProperty("result", out var result) &&
+            if (content.TryGetProperty("result", out var result) &&
                 result.TryGetProperty("result", out var inner) &&
                 inner.TryGetProperty("value", out var value))
             {
                 return value.ToString();
             }
-            return content;
+            return content.ToString();
         }
         catch
         {
-            return content;
+            return content.ToString();
         }
     }
 
@@ -58,20 +45,10 @@ public sealed class CdpTools
         [Description("Agent HTTP port (optional if only one agent connected)")] int? agentPort = null)
     {
         var agent = await session.GetAgentClientAsync(agentPort);
-        var url = $"{agent.BaseUrl}/api/cdp";
-        if (webviewId != null)
-            url += $"?webview={Uri.EscapeDataString(webviewId)}";
+        var paramsEl = JsonSerializer.Deserialize<JsonElement>(
+            JsonSerializer.Serialize(new { format = "png" }));
+        var json = await agent.SendCdpCommandAsync("Page.captureScreenshot", paramsEl, webviewId);
 
-        var body = JsonSerializer.Serialize(new
-        {
-            method = "Page.captureScreenshot",
-            @params = new { format = "png" }
-        });
-
-        var response = await _http.PostAsync(url, new StringContent(body, Encoding.UTF8, "application/json"));
-        var content = await response.Content.ReadAsStringAsync();
-
-        var json = JsonSerializer.Deserialize<JsonElement>(content);
         if (json.TryGetProperty("result", out var result) &&
             result.TryGetProperty("data", out var data))
         {

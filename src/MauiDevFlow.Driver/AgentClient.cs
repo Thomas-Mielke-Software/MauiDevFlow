@@ -180,6 +180,52 @@ public class AgentClient : IDisposable
     }
 
     /// <summary>
+    /// Set a property value on an element.
+    /// </summary>
+    public async Task<bool> SetPropertyAsync(string elementId, string propertyName, string value)
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(new { value });
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var response = await _http.PostAsync($"{_baseUrl}/api/property/{elementId}/{propertyName}", content);
+            return response.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Retrieve application logs from the agent.
+    /// </summary>
+    public async Task<string> GetLogsAsync(int limit = 100, int skip = 0, string? source = null)
+    {
+        var path = $"/api/logs?limit={limit}&skip={skip}";
+        if (!string.IsNullOrEmpty(source) && source != "all")
+            path += $"&source={Uri.EscapeDataString(source)}";
+        return await _http.GetStringAsync($"{_baseUrl}{path}");
+    }
+
+    /// <summary>
+    /// Send a CDP command to a Blazor WebView.
+    /// </summary>
+    public async Task<JsonElement> SendCdpCommandAsync(string method, JsonElement? @params = null, string? webviewId = null)
+    {
+        var path = "/api/cdp";
+        if (!string.IsNullOrEmpty(webviewId))
+            path += $"?webview={Uri.EscapeDataString(webviewId)}";
+
+        var body = new Dictionary<string, object> { ["method"] = method };
+        if (@params.HasValue && @params.Value.ValueKind != JsonValueKind.Undefined)
+            body["params"] = @params.Value;
+
+        var json = JsonSerializer.Serialize(body);
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+        var response = await _http.PostAsync($"{_baseUrl}{path}", content);
+        var responseBody = await response.Content.ReadAsStringAsync();
+        return JsonSerializer.Deserialize<JsonElement>(responseBody);
+    }
+
+    /// <summary>
     /// Gets the list of CDP WebViews registered with the agent.
     /// </summary>
     public async Task<JsonElement> GetCdpWebViewsAsync()
