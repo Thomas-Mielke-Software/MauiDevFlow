@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using Microsoft.Maui;
@@ -3830,6 +3831,109 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
 
     // ── Platform info endpoints ──
 
+    private const string PlatformErrorReasonMissingPermission = "missing_permission";
+    private const string PlatformErrorReasonNotSupported = "not_supported";
+    private const string PlatformErrorReasonMainThreadRequired = "main_thread_required";
+    private const string PlatformErrorReasonTimeout = "timeout";
+    private const string PlatformErrorReasonUnknown = "unknown";
+    private const string PlatformErrorReasonInvalidRequest = "invalid_request";
+    private static readonly Regex AndroidPermissionRegex = new(@"android\.permission\.[A-Z0-9_\.]+", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static HttpResponse CreatePlatformError(string message, Exception ex, int statusCode = 400, Dictionary<string, object?>? details = null)
+    {
+        var payload = BuildPlatformErrorPayload(ex, details);
+        return HttpResponse.Error(message, payload.StatusCode ?? statusCode, payload.Reason, payload.Details);
+    }
+
+    private static HttpResponse CreatePlatformError(string message, string reason, int statusCode = 400, Dictionary<string, object?>? details = null)
+    {
+        var payloadDetails = CreatePlatformErrorDetails();
+        if (details != null)
+        {
+            foreach (var (key, value) in details)
+            {
+                if (value != null)
+                    payloadDetails[key] = value;
+            }
+        }
+
+        return HttpResponse.Error(message, statusCode, reason, payloadDetails.Count > 0 ? payloadDetails : null);
+    }
+
+    private static (string Reason, Dictionary<string, object?>? Details, int? StatusCode) BuildPlatformErrorPayload(
+        Exception ex,
+        Dictionary<string, object?>? details = null)
+    {
+        var payloadDetails = CreatePlatformErrorDetails();
+        if (details != null)
+        {
+            foreach (var (key, value) in details)
+            {
+                if (value != null)
+                    payloadDetails[key] = value;
+            }
+        }
+
+        if (IsMissingPermissionException(ex))
+        {
+            if (TryExtractPermission(ex.Message) is { Length: > 0 } permission)
+                payloadDetails["permission"] = permission;
+
+            return (PlatformErrorReasonMissingPermission, payloadDetails.Count > 0 ? payloadDetails : null, 403);
+        }
+
+        if (IsMainThreadAccessException(ex))
+            return (PlatformErrorReasonMainThreadRequired, payloadDetails.Count > 0 ? payloadDetails : null, null);
+
+        if (ex is TimeoutException or TaskCanceledException or OperationCanceledException)
+            return (PlatformErrorReasonTimeout, payloadDetails.Count > 0 ? payloadDetails : null, 408);
+
+        if (ex is FeatureNotSupportedException or NotSupportedException or PlatformNotSupportedException or FeatureNotEnabledException)
+        {
+            if (ex is FeatureNotEnabledException)
+                payloadDetails["enabled"] = false;
+
+            return (PlatformErrorReasonNotSupported, payloadDetails.Count > 0 ? payloadDetails : null, null);
+        }
+
+        payloadDetails["exceptionType"] = ex.GetType().Name;
+        return (PlatformErrorReasonUnknown, payloadDetails, null);
+    }
+
+    private static Dictionary<string, object?> CreatePlatformErrorDetails()
+    {
+        var details = new Dictionary<string, object?>(StringComparer.Ordinal);
+        try
+        {
+            details["platform"] = DeviceInfo.Current.Platform.ToString();
+        }
+        catch
+        {
+        }
+
+        return details;
+    }
+
+    private static bool IsMissingPermissionException(Exception ex)
+    {
+        return ex is PermissionException
+            || AndroidPermissionRegex.IsMatch(ex.Message)
+            || ex.Message.Contains("AndroidManifest", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? TryExtractPermission(string message)
+    {
+        var match = AndroidPermissionRegex.Match(message);
+        return match.Success ? match.Value : null;
+    }
+
+    private static bool IsMainThreadAccessException(Exception ex)
+    {
+        return ex.GetType().Name.Equals("UIKitThreadAccessException", StringComparison.Ordinal)
+            || ex.Message.Contains("main thread", StringComparison.OrdinalIgnoreCase)
+            || ex.Message.Contains("UI thread", StringComparison.OrdinalIgnoreCase);
+    }
+
     private async Task<HttpResponse> HandlePlatformAppInfo(HttpRequest request)
     {
         try
@@ -3850,7 +3954,7 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         }
         catch (Exception ex)
         {
-            return HttpResponse.Error($"Failed to get app info: {ex.Message}");
+            return CreatePlatformError($"Failed to get app info: {ex.Message}", ex);
         }
     }
 
@@ -3872,7 +3976,7 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         }
         catch (Exception ex)
         {
-            return Task.FromResult(HttpResponse.Error($"Failed to get device info: {ex.Message}"));
+            return Task.FromResult(CreatePlatformError($"Failed to get device info: {ex.Message}", ex));
         }
     }
 
@@ -3896,7 +4000,7 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         }
         catch (Exception ex)
         {
-            return HttpResponse.Error($"Failed to get display info: {ex.Message}");
+            return CreatePlatformError($"Failed to get display info: {ex.Message}", ex);
         }
     }
 
@@ -3915,7 +4019,7 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         }
         catch (Exception ex)
         {
-            return Task.FromResult(HttpResponse.Error($"Failed to get battery info: {ex.Message}"));
+            return Task.FromResult(CreatePlatformError($"Failed to get battery info: {ex.Message}", ex));
         }
     }
 
@@ -3932,7 +4036,7 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         }
         catch (Exception ex)
         {
-            return Task.FromResult(HttpResponse.Error($"Failed to get connectivity info: {ex.Message}"));
+            return Task.FromResult(CreatePlatformError($"Failed to get connectivity info: {ex.Message}", ex));
         }
     }
 
@@ -3958,7 +4062,7 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         }
         catch (Exception ex)
         {
-            return Task.FromResult(HttpResponse.Error($"Failed to get version tracking info: {ex.Message}"));
+            return Task.FromResult(CreatePlatformError($"Failed to get version tracking info: {ex.Message}", ex));
         }
     }
 
@@ -4007,7 +4111,7 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         }
         catch (Exception ex)
         {
-            return HttpResponse.Error($"Failed to check permissions: {ex.Message}");
+            return CreatePlatformError($"Failed to check permissions: {ex.Message}", ex);
         }
     }
 
@@ -4016,10 +4120,16 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         try
         {
             if (!request.RouteParams.TryGetValue("permission", out var permName))
-                return HttpResponse.Error("permission name is required");
+                return HttpResponse.Error(
+                    "permission name is required",
+                    reason: PlatformErrorReasonInvalidRequest,
+                    details: new Dictionary<string, object?> { ["parameter"] = "permission" });
 
             if (!KnownPermissions.TryGetValue(permName, out var factory))
-                return HttpResponse.Error($"Unknown permission: {permName}. Valid: {string.Join(", ", KnownPermissions.Keys)}");
+                return HttpResponse.Error(
+                    $"Unknown permission: {permName}. Valid: {string.Join(", ", KnownPermissions.Keys)}",
+                    reason: PlatformErrorReasonInvalidRequest,
+                    details: new Dictionary<string, object?> { ["parameter"] = "permission" });
 
             var perm = factory();
             var status = await perm.CheckStatusAsync();
@@ -4027,7 +4137,7 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         }
         catch (Exception ex)
         {
-            return HttpResponse.Error($"Failed to check permission: {ex.Message}");
+            return CreatePlatformError($"Failed to check permission: {ex.Message}", ex);
         }
     }
 
@@ -4051,7 +4161,7 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
             var location = await Geolocation.GetLocationAsync(new GeolocationRequest(accuracy, TimeSpan.FromSeconds(timeoutSec)));
 
             if (location == null)
-                return HttpResponse.Error("Could not determine location");
+                return CreatePlatformError("Could not determine location", PlatformErrorReasonUnknown);
 
             return HttpResponse.Json(new
             {
@@ -4067,15 +4177,22 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         }
         catch (PermissionException)
         {
-            return HttpResponse.Error("Location permission not granted", 403);
+            return CreatePlatformError("Location permission not granted", PlatformErrorReasonMissingPermission, 403);
         }
         catch (FeatureNotEnabledException)
         {
-            return HttpResponse.Error("Location services not enabled on device");
+            return CreatePlatformError(
+                "Location services not enabled on device",
+                PlatformErrorReasonNotSupported,
+                details: new Dictionary<string, object?>
+                {
+                    ["feature"] = "geolocation",
+                    ["enabled"] = false
+                });
         }
         catch (Exception ex)
         {
-            return HttpResponse.Error($"Failed to get location: {ex.Message}");
+            return CreatePlatformError($"Failed to get location: {ex.Message}", ex);
         }
     }
 

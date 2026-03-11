@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using MauiDevFlow.Agent.Core;
 
 namespace MauiDevFlow.Tests;
 
@@ -196,6 +197,75 @@ public class AgentHttpServerTests : IDisposable
         Assert.Single(tree[0].Children[0].Children);
         Assert.Equal("Click Me", tree[0].Children[0].Children[0].Text);
 
+        listener.Stop();
+    }
+
+    [Fact]
+    public void HttpResponseError_IncludesReasonAndDetails_WhenProvided()
+    {
+        var response = HttpResponse.Error(
+            "Failed to get battery info",
+            403,
+            "missing_permission",
+            new Dictionary<string, object?>
+            {
+                ["permission"] = "android.permission.BATTERY_STATS",
+                ["platform"] = "Android"
+            });
+
+        Assert.Equal(403, response.StatusCode);
+        Assert.Equal("Forbidden", response.StatusText);
+        Assert.NotNull(response.Body);
+
+        var json = JsonSerializer.Deserialize<JsonElement>(response.Body!);
+        Assert.False(json.GetProperty("success").GetBoolean());
+        Assert.Equal("Failed to get battery info", json.GetProperty("error").GetString());
+        Assert.Equal("missing_permission", json.GetProperty("reason").GetString());
+        Assert.Equal("android.permission.BATTERY_STATS", json.GetProperty("details").GetProperty("permission").GetString());
+        Assert.Equal("Android", json.GetProperty("details").GetProperty("platform").GetString());
+    }
+
+    [Fact]
+    public async Task GetPlatformInfoAsync_ReturnsStructuredErrorBody_OnNonSuccessResponse()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, _port);
+        listener.Start();
+
+        var acceptTask = Task.Run(async () =>
+        {
+            using var client = await listener.AcceptTcpClientAsync();
+            using var stream = client.GetStream();
+            var buffer = new byte[4096];
+            var read = await stream.ReadAsync(buffer);
+            var request = Encoding.UTF8.GetString(buffer, 0, read);
+
+            Assert.Contains("GET /api/platform/battery", request);
+
+            var body = """
+            {
+              "success": false,
+              "error": "Failed to get battery info: You need to declare using the permission: `android.permission.BATTERY_STATS` in your AndroidManifest.xml",
+              "reason": "missing_permission",
+              "details": {
+                "permission": "android.permission.BATTERY_STATS",
+                "platform": "Android"
+              }
+            }
+            """;
+            var response = $"HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: {Encoding.UTF8.GetByteCount(body)}\r\nConnection: close\r\n\r\n{body}";
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(response));
+        });
+
+        using var agentClient = new MauiDevFlow.Driver.AgentClient("localhost", _port);
+        var result = await agentClient.GetPlatformInfoAsync("battery");
+
+        Assert.Equal(JsonValueKind.Object, result.ValueKind);
+        Assert.False(result.GetProperty("success").GetBoolean());
+        Assert.Equal("missing_permission", result.GetProperty("reason").GetString());
+        Assert.Equal("android.permission.BATTERY_STATS", result.GetProperty("details").GetProperty("permission").GetString());
+        Assert.Equal("Android", result.GetProperty("details").GetProperty("platform").GetString());
+
+        await acceptTask;
         listener.Stop();
     }
 
