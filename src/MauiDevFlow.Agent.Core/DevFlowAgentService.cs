@@ -3610,10 +3610,8 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
             var entries = new List<object>();
             foreach (var key in keys.OrderBy(k => k))
             {
-                var value = sharedName != null
-                    ? Preferences.Get(key, (string?)null, sharedName)
-                    : Preferences.Get(key, (string?)null);
-                entries.Add(new { key, value, sharedName });
+                var (value, type) = ReadPreferenceValue(key, sharedName);
+                entries.Add(new { key, value, type, sharedName });
             }
             return Task.FromResult(HttpResponse.Json(new { keys = entries }));
         }
@@ -3621,6 +3619,76 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         {
             return Task.FromResult(HttpResponse.Error($"Failed to list preferences: {ex.Message}"));
         }
+    }
+
+    /// <summary>
+    /// Read a preference value trying all supported types.
+    /// Android SharedPreferences stores typed values and throws ClassCastException
+    /// if you read with the wrong type, so we try each in turn.
+    /// </summary>
+    private (object? Value, string Type) ReadPreferenceValue(string key, string? sharedName)
+    {
+        // Try string first (most common)
+        try
+        {
+            var s = sharedName != null
+                ? Preferences.Get(key, (string?)null, sharedName)
+                : Preferences.Get(key, (string?)null);
+            return (s, "string");
+        }
+        catch { }
+
+        // Try int
+        try
+        {
+            var i = sharedName != null
+                ? Preferences.Get(key, int.MinValue, sharedName)
+                : Preferences.Get(key, int.MinValue);
+            return (i, "int");
+        }
+        catch { }
+
+        // Try bool
+        try
+        {
+            var b = sharedName != null
+                ? Preferences.Get(key, false, sharedName)
+                : Preferences.Get(key, false);
+            return (b, "bool");
+        }
+        catch { }
+
+        // Try double
+        try
+        {
+            var d = sharedName != null
+                ? Preferences.Get(key, double.NaN, sharedName)
+                : Preferences.Get(key, double.NaN);
+            if (!double.IsNaN(d)) return (d, "double");
+        }
+        catch { }
+
+        // Try long
+        try
+        {
+            var l = sharedName != null
+                ? Preferences.Get(key, long.MinValue, sharedName)
+                : Preferences.Get(key, long.MinValue);
+            return (l, "long");
+        }
+        catch { }
+
+        // Try float
+        try
+        {
+            var f = sharedName != null
+                ? Preferences.Get(key, float.NaN, sharedName)
+                : Preferences.Get(key, float.NaN);
+            if (!float.IsNaN(f)) return (f, "float");
+        }
+        catch { }
+
+        return (null, "unknown");
     }
 
     private Task<HttpResponse> HandlePreferencesGet(HttpRequest request)
@@ -3631,18 +3699,28 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
                 return Task.FromResult(HttpResponse.Error("key is required"));
 
             request.QueryParams.TryGetValue("sharedName", out var sharedName);
-            var type = request.QueryParams.GetValueOrDefault("type", "string");
+            var requestedType = request.QueryParams.GetValueOrDefault("type", null);
 
-            object? value = type.ToLowerInvariant() switch
+            object? value;
+            string type;
+            if (requestedType != null)
             {
-                "int" or "integer" => sharedName != null ? Preferences.Get(key, 0, sharedName) : Preferences.Get(key, 0),
-                "bool" or "boolean" => sharedName != null ? Preferences.Get(key, false, sharedName) : Preferences.Get(key, false),
-                "double" => sharedName != null ? Preferences.Get(key, 0.0, sharedName) : Preferences.Get(key, 0.0),
-                "float" => sharedName != null ? Preferences.Get(key, 0f, sharedName) : Preferences.Get(key, 0f),
-                "long" => sharedName != null ? Preferences.Get(key, 0L, sharedName) : Preferences.Get(key, 0L),
-                "datetime" => sharedName != null ? Preferences.Get(key, DateTime.MinValue, sharedName) : Preferences.Get(key, DateTime.MinValue),
-                _ => sharedName != null ? Preferences.Get(key, (string?)null, sharedName) : Preferences.Get(key, (string?)null),
-            };
+                type = requestedType;
+                value = type.ToLowerInvariant() switch
+                {
+                    "int" or "integer" => sharedName != null ? Preferences.Get(key, 0, sharedName) : Preferences.Get(key, 0),
+                    "bool" or "boolean" => sharedName != null ? Preferences.Get(key, false, sharedName) : Preferences.Get(key, false),
+                    "double" => sharedName != null ? Preferences.Get(key, 0.0, sharedName) : Preferences.Get(key, 0.0),
+                    "float" => sharedName != null ? Preferences.Get(key, 0f, sharedName) : Preferences.Get(key, 0f),
+                    "long" => sharedName != null ? Preferences.Get(key, 0L, sharedName) : Preferences.Get(key, 0L),
+                    "datetime" => sharedName != null ? Preferences.Get(key, DateTime.MinValue, sharedName) : Preferences.Get(key, DateTime.MinValue),
+                    _ => sharedName != null ? Preferences.Get(key, (string?)null, sharedName) : Preferences.Get(key, (string?)null),
+                };
+            }
+            else
+            {
+                (value, type) = ReadPreferenceValue(key, sharedName);
+            }
 
             var exists = sharedName != null ? Preferences.ContainsKey(key, sharedName) : Preferences.ContainsKey(key);
             return Task.FromResult(HttpResponse.Json(new { key, value, type, exists, sharedName }));
