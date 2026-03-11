@@ -130,6 +130,68 @@ public class PlatformAgentService : DevFlowAgentService
         return Task.FromResult(false);
     }
 
+    protected override bool TryNativeScrollOnPlatformView(object platformView, double deltaX, double deltaY)
+    {
+        try
+        {
+#if IOS || MACCATALYST
+            var uiView = platformView as UIKit.UIView;
+            UIKit.UIScrollView? uiScrollView = uiView as UIKit.UIScrollView;
+            if (uiScrollView == null)
+                uiScrollView = FindNativeDescendant<UIKit.UIScrollView>(uiView);
+            if (uiScrollView == null)
+                uiScrollView = FindNativeAncestor<UIKit.UIScrollView>(uiView);
+            if (uiScrollView != null)
+            {
+                var offset = uiScrollView.ContentOffset;
+                var newX = Math.Max(0, Math.Min(offset.X + deltaX, uiScrollView.ContentSize.Width - uiScrollView.Bounds.Width));
+                var newY = Math.Max(0, Math.Min(offset.Y - deltaY, uiScrollView.ContentSize.Height - uiScrollView.Bounds.Height));
+                uiScrollView.SetContentOffset(new CoreGraphics.CGPoint(newX, newY), animated: true);
+                return true;
+            }
+#elif ANDROID
+            var androidView = platformView as Android.Views.View;
+            var recyclerView = androidView as AndroidX.RecyclerView.Widget.RecyclerView;
+            if (recyclerView == null)
+                recyclerView = FindNativeDescendantAndroid<AndroidX.RecyclerView.Widget.RecyclerView>(androidView);
+            if (recyclerView == null)
+                recyclerView = FindNativeAncestorAndroid<AndroidX.RecyclerView.Widget.RecyclerView>(androidView);
+            if (recyclerView != null)
+            {
+                recyclerView.ScrollBy((int)deltaX, (int)-deltaY);
+                return true;
+            }
+            var androidScrollView = androidView as Android.Widget.ScrollView;
+            if (androidScrollView == null)
+                androidScrollView = FindNativeDescendantAndroid<Android.Widget.ScrollView>(androidView);
+            if (androidScrollView == null)
+                androidScrollView = FindNativeAncestorAndroid<Android.Widget.ScrollView>(androidView);
+            if (androidScrollView != null)
+            {
+                androidScrollView.ScrollBy((int)deltaX, (int)-deltaY);
+                return true;
+            }
+#elif WINDOWS
+            var winView = platformView as Microsoft.UI.Xaml.DependencyObject;
+            var scrollViewer = winView as Microsoft.UI.Xaml.Controls.ScrollViewer;
+            if (scrollViewer == null)
+                scrollViewer = FindWinUIDescendant<Microsoft.UI.Xaml.Controls.ScrollViewer>(winView);
+            if (scrollViewer == null)
+                scrollViewer = FindWinUIScrollViewer(winView);
+            if (scrollViewer != null)
+            {
+                scrollViewer.ChangeView(
+                    scrollViewer.HorizontalOffset + deltaX,
+                    scrollViewer.VerticalOffset - deltaY,
+                    null);
+                return true;
+            }
+#endif
+        }
+        catch { }
+        return false;
+    }
+
 #if IOS || MACCATALYST
     private static T? FindNativeAncestor<T>(UIKit.UIView? view) where T : UIKit.UIView
     {

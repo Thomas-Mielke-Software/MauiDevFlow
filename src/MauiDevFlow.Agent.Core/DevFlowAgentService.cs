@@ -1230,6 +1230,29 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
                         return "ok";
 
                     return $"No tap handler on {el.GetType().FullName} (gestures:{v.GestureRecognizers.Count}, type:{v.GetType().Name})";
+                // Comet views implement IGestureView with Gesture objects that have Invoke().
+                // Check via reflection to avoid a hard Comet dependency.
+                case IView gestureView when TryInvokeCometGestureTap(gestureView):
+                    return "ok";
+                // Comet views implement MAUI interfaces (IButton, ISwitch, etc.)
+                // but not Microsoft.Maui.Controls classes, so handle via interfaces
+                case IButton iBtn:
+                    iBtn.Clicked();
+                    return "ok";
+                case ISwitch iSw:
+                    iSw.IsOn = !iSw.IsOn;
+                    return "ok";
+                case ICheckBox iCb:
+                    iCb.IsChecked = !iCb.IsChecked;
+                    return "ok";
+                case IRadioButton iRb:
+                    iRb.IsChecked = true;
+                    return "ok";
+                case IView iView when iView.Handler?.PlatformView != null:
+                    // Last resort: try native tap via handler's platform view
+                    if (TryNativeTapOnHandler(iView))
+                        return "ok";
+                    return $"Unhandled IView type: {el.GetType().FullName}";
                 default:
                     return $"Unhandled type: {el.GetType().FullName}";
             }
@@ -1277,11 +1300,103 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
     }
 
     /// <summary>
+    /// Attempts to invoke a Comet-style tap gesture on an IView via reflection.
+    /// Checks for IGestureView interface by name, iterates Gestures looking for TapGesture,
+    /// and calls Invoke(). No hard Comet dependency required.
+    /// </summary>
+    private static bool TryInvokeCometGestureTap(IView view)
+    {
+        try
+        {
+            // Check if the view implements an interface named "IGestureView" with a "Gestures" property
+            var gestureViewInterface = view.GetType().GetInterfaces()
+                .FirstOrDefault(i => i.Name == "IGestureView");
+            if (gestureViewInterface == null) return false;
+
+            var gesturesProp = gestureViewInterface.GetProperty("Gestures");
+            if (gesturesProp == null) return false;
+
+            var gestures = gesturesProp.GetValue(view) as System.Collections.IEnumerable;
+            if (gestures == null) return false;
+
+            // Find the first gesture whose type name contains "TapGesture"
+            foreach (var gesture in gestures)
+            {
+                if (gesture == null) continue;
+                var gestureType = gesture.GetType();
+                if (gestureType.Name.Contains("TapGesture") ||
+                    (gestureType.BaseType != null && gestureType.BaseType.Name.Contains("TapGesture")))
+                {
+                    // Call Invoke() — public virtual method on Comet.Gesture
+                    var invokeMethod = gestureType.GetMethod("Invoke",
+                        BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                    if (invokeMethod != null)
+                    {
+                        invokeMethod.Invoke(gesture, null);
+                        return true;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[MauiDevFlow] TryInvokeCometGestureTap failed: {ex.GetBaseException().Message}");
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Attempts to tap a native platform view as a fallback.
     /// Override in platform-specific subclasses for native tap support.
     /// </summary>
     protected virtual bool TryNativeTap(VisualElement ve)
     {
+        return false;
+    }
+
+    /// <summary>
+    /// Attempts to tap a native platform view via handler for non-VisualElement IView types (e.g. Comet views).
+    /// Uses reflection to get the PlatformView from the handler and invoke SendAccessibilityAction or performClick.
+    /// Override in platform-specific subclasses for richer support.
+    /// </summary>
+    protected virtual bool TryNativeTapOnHandler(IView view)
+    {
+        try
+        {
+            var handler = view.Handler;
+            if (handler == null) return false;
+
+            // Use safe reflection to get PlatformView (avoids AmbiguousMatchException on generic handlers)
+            var platformViewProp = CometViewResolver.GetPropertySafe(handler.GetType(), "PlatformView");
+            if (platformViewProp == null) return false;
+
+            var platformView = platformViewProp.GetValue(handler);
+            if (platformView == null) return false;
+
+            // Try to invoke SendActionForControlEvents on UIControl (iOS/macCatalyst)
+            var sendActionMethod = platformView.GetType().GetMethod("SendActionForControlEvents",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (sendActionMethod != null)
+            {
+                // UIControlEvent.TouchUpInside = 1 << 6 = 64
+                sendActionMethod.Invoke(platformView, new object[] { (nuint)64 });
+                return true;
+            }
+
+            // Try performClick for Android
+            var performClickMethod = platformView.GetType().GetMethod("PerformClick",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
+                null, Type.EmptyTypes, null);
+            if (performClickMethod != null)
+            {
+                performClickMethod.Invoke(platformView, null);
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[MauiDevFlow] TryNativeTapOnHandler failed: {ex.GetBaseException().Message}");
+        }
         return false;
     }
 
@@ -1606,6 +1721,14 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
                             return "ok";
                     }
                 }
+                // Comet views implement IView/IScrollView but NOT VisualElement.
+                // Try native scroll via the handler's platform view.
+                else if (el is IView iView && (body.DeltaX != 0 || body.DeltaY != 0))
+                {
+                    if (await TryNativeScrollOnHandler(iView, body.DeltaX, body.DeltaY))
+                        return "ok";
+                    return $"Native scroll not supported for IView type: {el.GetType().FullName}";
+                }
 
                 return $"No scrollable ancestor found for element '{body.ElementId}'";
             }
@@ -1638,6 +1761,12 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
                     () => targetScroll.ScrollToAsync(x, y, false));
                 return "ok";
             }
+
+            // 3c: Try IView-based scroll (Comet ScrollView implements IScrollView, not Controls.ScrollView)
+            // Walk the visual tree looking for IScrollView implementations via IVisualTreeElement
+            var iScrollView = FindDescendantIScrollView(currentPage);
+            if (iScrollView != null && await TryNativeScrollOnHandler(iScrollView, body.DeltaX, body.DeltaY))
+                return "ok";
 
             return "No scrollable view found on page";
         });
@@ -1710,6 +1839,69 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
     protected virtual Task<bool> TryNativeScroll(VisualElement element, double deltaX, double deltaY)
     {
         return Task.FromResult(false);
+    }
+
+    /// <summary>
+    /// Attempts native scroll on an IView (e.g. Comet ScrollView) via its handler's platform view.
+    /// Uses reflection to find UIScrollView (iOS/macCatalyst), Android ScrollView, or WinUI ScrollViewer.
+    /// Override in platform-specific subclasses for richer support.
+    /// </summary>
+    protected virtual Task<bool> TryNativeScrollOnHandler(IView view, double deltaX, double deltaY)
+    {
+        try
+        {
+            var handler = view.Handler;
+            if (handler == null) return Task.FromResult(false);
+
+            var platformViewProp = CometViewResolver.GetPropertySafe(handler.GetType(), "PlatformView");
+            if (platformViewProp == null) return Task.FromResult(false);
+
+            var platformView = platformViewProp.GetValue(handler);
+            if (platformView == null) return Task.FromResult(false);
+
+            // Delegate to platform override's native scroll capability via reflection
+            // Look for UIScrollView (iOS/macCatalyst) via searching the native view hierarchy
+            var scrollResult = TryNativeScrollOnPlatformView(platformView, deltaX, deltaY);
+            return Task.FromResult(scrollResult);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[MauiDevFlow] TryNativeScrollOnHandler failed: {ex.GetBaseException().Message}");
+        }
+        return Task.FromResult(false);
+    }
+
+    /// <summary>
+    /// Attempts native scroll directly on a platform view object.
+    /// Override in platform-specific subclasses (iOS, Android, Windows) for real implementations.
+    /// </summary>
+    protected virtual bool TryNativeScrollOnPlatformView(object platformView, double deltaX, double deltaY)
+    {
+        return false;
+    }
+
+    /// <summary>
+    /// Walks the visual tree from a root element looking for an IScrollView implementation
+    /// (including Comet ScrollView which implements IScrollView but not Controls.ScrollView).
+    /// Accepts IVisualTreeElement to traverse Comet views that are not Element subclasses.
+    /// </summary>
+    private static IView? FindDescendantIScrollView(IVisualTreeElement root)
+    {
+        if (root is IScrollView && root is IView svView)
+            return svView;
+
+        foreach (var child in root.GetVisualChildren())
+        {
+            if (child is IScrollView && child is IView childView)
+                return childView;
+            if (child is IVisualTreeElement childVte)
+            {
+                var found = FindDescendantIScrollView(childVte);
+                if (found != null) return found;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
