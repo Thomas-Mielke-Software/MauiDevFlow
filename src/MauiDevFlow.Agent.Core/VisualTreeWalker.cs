@@ -494,9 +494,33 @@ public class VisualTreeWalker
         }
         else
         {
-            // Non-Element IVisualTreeElement (rare)
-            var platformId = EnsurePlatformStableId(element);
-            id = platformId ?? RuntimeHelpers.GetHashCode(element).ToString("x8");
+            // Non-Element IVisualTreeElement — check IView.AutomationId first
+            // (Comet views auto-stamp AutomationId via AppHostBuilderExtensions)
+            string? automId = null;
+            if (element is IView iv && !string.IsNullOrEmpty(iv.AutomationId))
+                automId = iv.AutomationId;
+
+            if (automId != null)
+            {
+                id = automId;
+                if (_usedIds.Contains(id))
+                    id = $"{id}_{RuntimeHelpers.GetHashCode(element):x8}";
+            }
+            else
+            {
+                // Try the element itself first, then try the handler's PlatformView
+                // (Comet views stamp AccessibilityIdentifier on the native view, not IView.AutomationId)
+                var platformId = EnsurePlatformStableId(element);
+                if (platformId == null && element is IView iViewForPlatform)
+                {
+                    var platformView = CometViewResolver.GetPropertySafe(
+                        iViewForPlatform.Handler?.GetType() ?? typeof(object), "PlatformView")
+                        ?.GetValue(iViewForPlatform.Handler);
+                    if (platformView != null)
+                        platformId = EnsurePlatformStableId(platformView);
+                }
+                id = platformId ?? RuntimeHelpers.GetHashCode(element).ToString("x8");
+            }
         }
 
         _usedIds.Add(id);
