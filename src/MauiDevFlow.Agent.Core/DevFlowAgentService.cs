@@ -3638,24 +3638,27 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
 
     // ── Platform info endpoints ──
 
-    private Task<HttpResponse> HandlePlatformAppInfo(HttpRequest request)
+    private async Task<HttpResponse> HandlePlatformAppInfo(HttpRequest request)
     {
         try
         {
-            var info = AppInfo.Current;
-            return Task.FromResult(HttpResponse.Json(new
+            return await MainThread.InvokeOnMainThreadAsync(() =>
             {
-                name = info.Name,
-                packageName = info.PackageName,
-                version = info.VersionString,
-                buildNumber = info.BuildString,
-                requestedTheme = info.RequestedTheme.ToString(),
-                requestedLayoutDirection = info.RequestedLayoutDirection.ToString(),
-            }));
+                var info = AppInfo.Current;
+                return HttpResponse.Json(new
+                {
+                    name = info.Name,
+                    packageName = info.PackageName,
+                    version = info.VersionString,
+                    buildNumber = info.BuildString,
+                    requestedTheme = info.RequestedTheme.ToString(),
+                    requestedLayoutDirection = info.RequestedLayoutDirection.ToString(),
+                });
+            });
         }
         catch (Exception ex)
         {
-            return Task.FromResult(HttpResponse.Error($"Failed to get app info: {ex.Message}"));
+            return HttpResponse.Error($"Failed to get app info: {ex.Message}");
         }
     }
 
@@ -3681,24 +3684,27 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         }
     }
 
-    private Task<HttpResponse> HandlePlatformDeviceDisplay(HttpRequest request)
+    private async Task<HttpResponse> HandlePlatformDeviceDisplay(HttpRequest request)
     {
         try
         {
-            var display = DeviceDisplay.MainDisplayInfo;
-            return Task.FromResult(HttpResponse.Json(new
+            return await MainThread.InvokeOnMainThreadAsync(() =>
             {
-                width = display.Width,
-                height = display.Height,
-                density = display.Density,
-                orientation = display.Orientation.ToString(),
-                rotation = display.Rotation.ToString(),
-                refreshRate = display.RefreshRate,
-            }));
+                var display = DeviceDisplay.MainDisplayInfo;
+                return HttpResponse.Json(new
+                {
+                    width = display.Width,
+                    height = display.Height,
+                    density = display.Density,
+                    orientation = display.Orientation.ToString(),
+                    rotation = display.Rotation.ToString(),
+                    refreshRate = display.RefreshRate,
+                });
+            });
         }
         catch (Exception ex)
         {
-            return Task.FromResult(HttpResponse.Error($"Failed to get display info: {ex.Message}"));
+            return HttpResponse.Error($"Failed to get display info: {ex.Message}");
         }
     }
 
