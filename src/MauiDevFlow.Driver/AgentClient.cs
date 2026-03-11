@@ -315,8 +315,12 @@ public class AgentClient : IDisposable
     {
         try
         {
-            var response = await _http.GetStringAsync($"{_baseUrl}{path}");
-            return JsonSerializer.Deserialize<JsonElement>(response);
+            using var response = await _http.GetAsync($"{_baseUrl}{path}");
+            var body = await response.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(body))
+                return default;
+
+            return JsonSerializer.Deserialize<JsonElement>(body);
         }
         catch { return default; }
     }

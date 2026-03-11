@@ -318,6 +318,8 @@ auto-assigned by the broker (range 10223–10899), or configurable via `.mauidev
 | `/api/platform/permissions` | GET | Check status of all known permissions |
 | `/api/platform/permissions/{name}` | GET | Check a specific permission status |
 | `/api/platform/geolocation` | GET | GPS coordinates. `?accuracy=Medium` `?timeout=10` |
+
+Platform endpoints return structured JSON errors on failure. In addition to `success` and `error`, failures may include a machine-readable `reason` and `details` object so clients can distinguish cases like `missing_permission`, `not_supported`, `main_thread_required`, `timeout`, and `unknown` without parsing the error text.
 | `/api/sensors` | GET | List all sensors with support/active/subscriber status |
 | `/api/sensors/{sensor}/start` | POST | Start sensor. `?speed=UI\|Game\|Fastest\|Default` |
 | `/api/sensors/{sensor}/stop` | POST | Stop sensor |

@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace MauiDevFlow.Agent.Core;
 
@@ -467,12 +468,37 @@ public class HttpResponse
         Body = JsonSerializer.Serialize(new { success = true, message })
     };
 
-    public static HttpResponse Error(string message, int statusCode = 400) => new()
+    public static HttpResponse Error(string message, int statusCode = 400, string? reason = null, object? details = null)
     {
-        StatusCode = statusCode,
-        StatusText = statusCode == 404 ? "Not Found" : "Bad Request",
-        Body = JsonSerializer.Serialize(new { success = false, error = message })
-    };
+        var body = new Dictionary<string, object?>
+        {
+            ["success"] = false,
+            ["error"] = message
+        };
+
+        if (!string.IsNullOrWhiteSpace(reason))
+            body["reason"] = reason;
+
+        if (details != null)
+            body["details"] = details;
+
+        return new HttpResponse
+        {
+            StatusCode = statusCode,
+            StatusText = statusCode switch
+            {
+                403 => "Forbidden",
+                404 => "Not Found",
+                408 => "Request Timeout",
+                500 => "Internal Server Error",
+                _ => "Bad Request"
+            },
+            Body = JsonSerializer.Serialize(body, new JsonSerializerOptions
+            {
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+            })
+        };
+    }
 
     public static HttpResponse NotFound(string message = "Not found") => Error(message, 404);
 }
