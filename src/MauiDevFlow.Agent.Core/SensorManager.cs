@@ -11,8 +11,15 @@ public class SensorManager : IDisposable
 {
     private readonly HashSet<string> _activeSensors = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, List<ConcurrentQueue<string>>> _subscribers = new();
+    private readonly ConcurrentDictionary<string, DateTime> _lastBroadcast = new();
     private readonly object _gate = new();
     private bool _disposed;
+
+    /// <summary>
+    /// Minimum interval between broadcasts per sensor. Readings arriving faster are dropped.
+    /// Default 100ms (~10 readings/sec). Configurable via Start() or the throttleMs query param.
+    /// </summary>
+    public int ThrottleMs { get; set; } = 100;
 
     private static readonly string[] AllSensorNames =
         ["accelerometer", "barometer", "compass", "gyroscope", "magnetometer", "orientation"];
@@ -164,10 +171,17 @@ public class SensorManager : IDisposable
 
     private void Broadcast(string sensorName, object data)
     {
+        // Throttle: drop readings that arrive faster than ThrottleMs
+        var now = DateTime.UtcNow;
+        var last = _lastBroadcast.GetOrAdd(sensorName, DateTime.MinValue);
+        if ((now - last).TotalMilliseconds < ThrottleMs)
+            return;
+        _lastBroadcast[sensorName] = now;
+
         var json = JsonSerializer.Serialize(new
         {
             sensor = sensorName,
-            timestamp = DateTime.UtcNow.ToString("O"),
+            timestamp = now.ToString("O"),
             data
         });
 

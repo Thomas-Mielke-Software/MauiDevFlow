@@ -761,12 +761,13 @@ class Program
         var sensorsStreamSensorArg = new Argument<string>("sensor", "Sensor name to stream");
         var sensorsStreamSpeedOption = new Option<string>("--speed", () => "UI", "Sensor speed (UI|Game|Fastest|Default)");
         var sensorsStreamDurationOption = new Option<int>("--duration", () => 0, "Duration in seconds (0 = indefinite, Ctrl+C to stop)");
-        var sensorsStreamCmd = new Command("stream", "Stream sensor readings via WebSocket") { sensorsStreamSensorArg, sensorsStreamSpeedOption, sensorsStreamDurationOption };
-        sensorsStreamCmd.SetHandler(async (host, port, json, noJson, sensor, speed, duration) =>
+        var sensorsStreamThrottleOption = new Option<int>("--throttle", () => 100, "Minimum ms between readings (default 100 = ~10/sec, 0 = no throttle)");
+        var sensorsStreamCmd = new Command("stream", "Stream sensor readings via WebSocket") { sensorsStreamSensorArg, sensorsStreamSpeedOption, sensorsStreamDurationOption, sensorsStreamThrottleOption };
+        sensorsStreamCmd.SetHandler(async (host, port, json, noJson, sensor, speed, duration, throttle) =>
         {
             var isJson = OutputWriter.ResolveJsonMode(json, noJson);
-            await SensorStreamAsync(host, port, sensor, speed, duration, isJson);
-        }, agentHostOption, agentPortOption, jsonOption, noJsonOption, sensorsStreamSensorArg, sensorsStreamSpeedOption, sensorsStreamDurationOption);
+            await SensorStreamAsync(host, port, sensor, speed, duration, throttle, isJson);
+        }, agentHostOption, agentPortOption, jsonOption, noJsonOption, sensorsStreamSensorArg, sensorsStreamSpeedOption, sensorsStreamDurationOption, sensorsStreamThrottleOption);
         sensorsCommand.Add(sensorsStreamCmd);
 
         mauiCommand.Add(sensorsCommand);
@@ -1394,12 +1395,12 @@ class Program
         }
     }
 
-    private static async Task SensorStreamAsync(string host, int port, string sensor, string speed, int duration, bool json)
+    private static async Task SensorStreamAsync(string host, int port, string sensor, string speed, int duration, int throttleMs, bool json)
     {
         try
         {
             using var client = new System.Net.WebSockets.ClientWebSocket();
-            var uri = new Uri($"ws://{host}:{port}/ws/sensors?sensor={Uri.EscapeDataString(sensor)}&speed={Uri.EscapeDataString(speed)}");
+            var uri = new Uri($"ws://{host}:{port}/ws/sensors?sensor={Uri.EscapeDataString(sensor)}&speed={Uri.EscapeDataString(speed)}&throttleMs={throttleMs}");
             using var cts = duration > 0
                 ? new CancellationTokenSource(TimeSpan.FromSeconds(duration))
                 : new CancellationTokenSource();

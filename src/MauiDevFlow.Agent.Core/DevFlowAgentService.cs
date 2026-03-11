@@ -3933,6 +3933,14 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         // Auto-start the sensor if not already running
         var speedStr = request.QueryParams.GetValueOrDefault("speed", "UI");
         var speed = SensorManager.ParseSpeed(speedStr);
+
+        // Allow clients to override throttle interval (default 100ms)
+        if (request.QueryParams.TryGetValue("throttleMs", out var throttleStr) &&
+            int.TryParse(throttleStr, out var throttleMs) && throttleMs >= 0)
+        {
+            Sensors.ThrottleMs = throttleMs;
+        }
+
         var startError = Sensors.Start(sensorName, speed);
         if (startError != null)
         {
@@ -3949,7 +3957,7 @@ public class DevFlowAgentService : IDisposable, IMarkerPublisher
         {
             // Confirm subscription
             await AgentHttpServer.WebSocketSendTextAsync(stream,
-                JsonSerializer.Serialize(new { type = "subscribed", sensor = sensorName, speed = speed.ToString() }), ct);
+                JsonSerializer.Serialize(new { type = "subscribed", sensor = sensorName, speed = speed.ToString(), throttleMs = Sensors.ThrottleMs }), ct);
 
             // Read loop (detects disconnection)
             var readTask = Task.Run(async () =>
