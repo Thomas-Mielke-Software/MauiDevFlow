@@ -424,6 +424,92 @@ directory (or current directory if `--output` is not specified). Existing files 
 The file list is discovered dynamically from the repository, so new reference docs are picked up
 automatically.
 
+## MCP Server
+
+MauiDevFlow includes an MCP (Model Context Protocol) server for integration with AI coding agents in VS Code Copilot Chat, Claude Desktop, and other MCP-compatible hosts. The MCP server returns structured JSON and inline images — enabling AI agents to see screenshots directly and query the visual tree without text parsing.
+
+### Configuration
+
+Add to your VS Code MCP settings (`.vscode/mcp.json`):
+
+```json
+{
+  "servers": {
+    "maui-devflow": {
+      "command": "maui-devflow",
+      "args": ["mcp-serve"],
+      "transportType": "stdio"
+    }
+  }
+}
+```
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| **Inspection** | |
+| `maui_screenshot` | Capture screenshot — **returns image directly** to the AI agent |
+| `maui_tree` | Visual tree as structured JSON with element IDs, types, bounds, properties |
+| `maui_element` | Get detailed info for a single element |
+| `maui_query` | Query elements by type, AutomationId, or text |
+| `maui_query_css` | Query Blazor WebView elements via CSS selector |
+| `maui_hittest` | Find element at screen coordinates |
+| `maui_assert` | Assert an element property matches an expected value |
+| **Interaction** | |
+| `maui_tap` | Tap a UI element by ID |
+| `maui_fill` | Fill text into an Entry/Editor/SearchBar |
+| `maui_clear` | Clear text from an input element |
+| `maui_scroll` | Scroll a ScrollView (by delta, item index, or position) |
+| `maui_focus` | Set focus to an element |
+| `maui_navigate` | Navigate to a Shell route |
+| `maui_resize` | Resize the app window |
+| **Properties** | |
+| `maui_get_property` | Get a property value |
+| `maui_set_property` | Set a property value at runtime |
+| **Logging & Network** | |
+| `maui_logs` | Structured log entries with level filtering |
+| `maui_network` | Captured HTTP requests with status, timing, sizes |
+| `maui_network_detail` | Full request/response detail including headers and body |
+| `maui_network_clear` | Clear captured network requests |
+| **Preferences & Storage** | |
+| `maui_preferences_list` | List all known preference keys |
+| `maui_preferences_get` | Get a preference value by key |
+| `maui_preferences_set` | Set a preference value |
+| `maui_preferences_delete` | Remove a preference by key |
+| `maui_preferences_clear` | Clear all preferences |
+| `maui_secure_storage_get` | Get a value from encrypted secure storage |
+| `maui_secure_storage_set` | Set a value in encrypted secure storage |
+| `maui_secure_storage_delete` | Remove a secure storage entry |
+| `maui_secure_storage_clear` | Clear all secure storage entries |
+| **Platform & Device** | |
+| `maui_app_info` | App name, version, package name, build number, theme |
+| `maui_device_info` | Device manufacturer, model, OS version, platform, idiom |
+| `maui_display_info` | Screen width, height, density, orientation, refresh rate |
+| `maui_battery_info` | Battery level, charging state, power source |
+| `maui_connectivity` | Network access status and connection profiles |
+| `maui_geolocation` | Current GPS coordinates |
+| **Sensors** | |
+| `maui_sensors_list` | List available device sensors and their status |
+| `maui_sensors_start` | Start a sensor (Accelerometer, Gyroscope, etc.) |
+| `maui_sensors_stop` | Stop a running sensor |
+| **Recording** | |
+| `maui_recording_start` | Start screen recording |
+| `maui_recording_stop` | Stop recording and save the file |
+| `maui_recording_status` | Check recording status |
+| **Blazor WebView (CDP)** | |
+| `maui_cdp_evaluate` | Execute JavaScript in a Blazor WebView |
+| `maui_cdp_screenshot` | Capture WebView screenshot via CDP |
+| `maui_cdp_source` | Get WebView HTML source |
+| `maui_cdp_webviews` | List registered Blazor WebViews |
+| **Agent Management** | |
+| `maui_list_agents` | List connected MAUI apps |
+| `maui_status` | Agent status (platform, version, app name) |
+| `maui_wait` | Wait for an agent to connect |
+| `maui_select_agent` | Set default agent for the session |
+
+All tools accept an optional `agentPort` parameter. When omitted, the server auto-discovers the connected agent via the broker — same as the CLI.
+
 ## License
 
 MIT

@@ -895,6 +895,11 @@ class Program
         }, jsonOption, noJsonOption);
         rootCommand.Add(commandsCmd);
 
+        // ===== MCP server command =====
+        var mcpServeCmd = new Command("mcp-serve", "Start MCP (Model Context Protocol) server for AI agent integration via stdio");
+        mcpServeCmd.SetHandler(async () => await Mcp.McpServerHost.RunAsync());
+        rootCommand.Add(mcpServeCmd);
+
         _parser = new CommandLineBuilder(rootCommand)
             .UseDefaults()
             .Build();
@@ -904,33 +909,16 @@ class Program
         return _errorOccurred ? 1 : result;
     }
     
-    // ===== CDP Helper: Send command via HTTP POST /api/cdp =====
+    // ===== CDP Helper: Send command via AgentClient =====
 
     private static async Task<JsonElement?> SendCdpCommandAsync(string host, int port, string method, object? parameters = null, string? webview = null)
     {
-        using var http = new HttpClient();
-        http.Timeout = TimeSpan.FromSeconds(30);
-
-        var command = new Dictionary<string, object>
-        {
-            ["id"] = 1,
-            ["method"] = method
-        };
-        if (parameters != null)
-            command["params"] = parameters;
-
-        var json = JsonSerializer.Serialize(command);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
-        var url = string.IsNullOrEmpty(webview)
-            ? $"http://{host}:{port}/api/cdp"
-            : $"http://{host}:{port}/api/cdp?webview={Uri.EscapeDataString(webview)}";
-        var response = await http.PostAsync(url, content);
-        var body = await response.Content.ReadAsStringAsync();
-
-        if (!response.IsSuccessStatusCode)
-            throw new Exception($"CDP request failed ({response.StatusCode}): {body}");
-
-        return JsonSerializer.Deserialize<JsonElement>(body);
+        using var client = new MauiDevFlow.Driver.AgentClient(host, port);
+        JsonElement? paramsEl = parameters != null
+            ? JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(parameters))
+            : null;
+        var result = await client.SendCdpCommandAsync(method, paramsEl, webview);
+        return result;
     }
 
     private static async Task<string> CdpEvaluateAsync(string host, int port, string expression, string? webview = null)
@@ -1184,10 +1172,9 @@ class Program
     {
         try
         {
-            using var http = new HttpClient();
-            http.Timeout = TimeSpan.FromSeconds(5);
-            var response = await http.GetAsync($"http://{host}:{port}/api/cdp/webviews");
-            var body = await response.Content.ReadAsStringAsync();
+            using var client = new MauiDevFlow.Driver.AgentClient(host, port);
+            var result = await client.GetCdpWebViewsAsync();
+            var body = result.ToString();
 
             if (json)
             {
@@ -1195,8 +1182,7 @@ class Program
                 return;
             }
 
-            var doc = JsonDocument.Parse(body);
-            if (doc.RootElement.TryGetProperty("webviews", out var webviews))
+            if (result.TryGetProperty("webviews", out var webviews))
             {
                 if (webviews.GetArrayLength() == 0)
                 {
@@ -1227,21 +1213,9 @@ class Program
     {
         try
         {
-            using var http = new HttpClient();
-            http.Timeout = TimeSpan.FromSeconds(10);
-            var url = $"http://{host}:{port}/api/cdp/source";
-            if (!string.IsNullOrEmpty(webview))
-                url += $"?webview={Uri.EscapeDataString(webview)}";
-            var response = await http.GetAsync(url);
-            var body = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode)
-            {
-                WriteError($"Failed to get page source: {body}");
-                return;
-            }
-
-            Console.WriteLine(body);
+            using var client = new MauiDevFlow.Driver.AgentClient(host, port);
+            var source = await client.GetCdpSourceAsync(webview);
+            Console.WriteLine(source);
         }
         catch (Exception ex)
         {
@@ -2132,21 +2106,16 @@ class Program
     {
         try
         {
-            using var http = new HttpClient();
-            http.Timeout = TimeSpan.FromSeconds(10);
-            var body = JsonSerializer.Serialize(new { value });
-            var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
-            var response = await http.PostAsync($"http://{host}:{port}/api/property/{elementId}/{propertyName}", content);
-            var responseBody = await response.Content.ReadAsStringAsync();
-
-            if (response.IsSuccessStatusCode)
+            using var client = new MauiDevFlow.Driver.AgentClient(host, port);
+            var success = await client.SetPropertyAsync(elementId, propertyName, value);
+            if (success)
             {
                 OutputWriter.WriteActionResult(true, "SetProperty", elementId, json,
                     $"Set {propertyName} = {value}");
             }
             else
             {
-                OutputWriter.WriteError($"Failed: {responseBody}", json);
+                OutputWriter.WriteError($"Failed to set {propertyName}", json);
                 _errorOccurred = true;
             }
         }
@@ -2240,20 +2209,8 @@ class Program
     {
         try
         {
-            using var http = new HttpClient();
-            http.BaseAddress = new Uri($"http://{host}:{port}");
-            var url = $"/api/logs?limit={limit}&skip={skip}";
-            if (!string.IsNullOrEmpty(source))
-                url += $"&source={Uri.EscapeDataString(source)}";
-            var response = await http.GetAsync(url);
-            var body = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode)
-            {
-                OutputWriter.WriteError($"Failed to fetch logs: {response.StatusCode} {body}", json);
-                _errorOccurred = true;
-                return;
-            }
+            using var client = new MauiDevFlow.Driver.AgentClient(host, port);
+            var body = await client.GetLogsAsync(limit, skip, source);
 
             if (json)
             {
@@ -3120,95 +3077,39 @@ class Program
     /// <summary>
     /// Reads the port from .mauidevflow in the current directory.
     /// </summary>
-    private static int? ReadConfigPort()
-    {
-        try
-        {
-            var path = Path.Combine(Directory.GetCurrentDirectory(), ".mauidevflow");
-            if (!File.Exists(path)) return null;
-
-            var json = File.ReadAllText(path);
-            var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("port", out var portProp) && portProp.ValueKind == JsonValueKind.Number)
-                return portProp.GetInt32();
-        }
-        catch { /* ignore parse failures */ }
-        return null;
-    }
-
     /// <summary>
     /// Resolves the agent port: broker discovery → .mauidevflow config → default 9223.
     /// </summary>
     private static int ResolveAgentPort()
     {
-        // Try broker discovery
         try
         {
+            var port = Broker.BrokerClient.ResolveAgentPortForProjectAsync().GetAwaiter().GetResult();
+            if (port.HasValue) return port.Value;
+
+            // No single match — check config file fallback
+            var configPort = Broker.BrokerClient.ReadConfigPort();
+            if (configPort.HasValue) return configPort.Value;
+
+            // Multiple agents, can't disambiguate — show them so the caller
+            // (human or AI agent) can re-run with --agent-port
             var brokerPort = Broker.BrokerClient.ReadBrokerPortPublic() ?? Broker.BrokerServer.DefaultPort;
-
-            // Quick TCP check if broker is alive; auto-start if not
-            bool brokerAlive = false;
-            try
+            var agents = Broker.BrokerClient.ListAgentsAsync(brokerPort).GetAwaiter().GetResult();
+            if (agents != null && agents.Length > 1)
             {
-                using var tcp = new System.Net.Sockets.TcpClient();
-                tcp.ConnectAsync("localhost", brokerPort).Wait(TimeSpan.FromMilliseconds(300));
-                brokerAlive = tcp.Connected;
-            }
-            catch { /* connect failed or timed out — broker not alive */ }
-
-            if (!brokerAlive)
-            {
-                // Auto-start broker in background
-                try
-                {
-                    var brokerResult = Broker.BrokerClient.EnsureBrokerRunningAsync().GetAwaiter().GetResult();
-                    if (brokerResult.HasValue)
-                    {
-                        brokerPort = brokerResult.Value;
-                        brokerAlive = true;
-                    }
-                }
-                catch { }
-            }
-
-            if (brokerAlive)
-            {
-                // Find project in current directory
-                var csproj = Directory.GetFiles(Directory.GetCurrentDirectory(), "*.csproj").FirstOrDefault();
-                if (csproj != null)
-                {
-                    var port = Broker.BrokerClient.ResolveAgentPortAsync(brokerPort, Path.GetFullPath(csproj)).GetAwaiter().GetResult();
-                    if (port.HasValue) return port.Value;
-                }
-
-                // Try auto-select (single agent)
-                var autoPort = Broker.BrokerClient.ResolveAgentPortAsync(brokerPort).GetAwaiter().GetResult();
-                if (autoPort.HasValue) return autoPort.Value;
-
-                // Multiple agents, can't disambiguate — show them so the caller
-                // (human or AI agent) can re-run with --agent-port
-                // Only show if we won't have a config file fallback
-                var configPort = ReadConfigPort();
-                if (configPort.HasValue) return configPort.Value;
-
-                var agents = Broker.BrokerClient.ListAgentsAsync(brokerPort).GetAwaiter().GetResult();
-                if (agents != null && agents.Length > 1)
-                {
-                    Console.Error.WriteLine("Multiple agents connected. Use --agent-port to specify which one:");
-                    Console.Error.WriteLine();
-                    Console.Error.WriteLine($"{"ID",-15}{"App",-20}{"Platform",-15}{"TFM",-25}{"Port",-7}");
-                    Console.Error.WriteLine(new string('-', 82));
-                    foreach (var a in agents)
-                        Console.Error.WriteLine($"{a.Id,-15}{a.AppName,-20}{a.Platform,-15}{a.Tfm,-25}{a.Port,-7}");
-                    Console.Error.WriteLine();
-                    Console.Error.WriteLine("Example: maui-devflow MAUI status --agent-port <port>");
-                }
+                Console.Error.WriteLine("Multiple agents connected. Use --agent-port to specify which one:");
+                Console.Error.WriteLine();
+                Console.Error.WriteLine($"{"ID",-15}{"App",-20}{"Platform",-15}{"TFM",-25}{"Port",-7}");
+                Console.Error.WriteLine(new string('-', 82));
+                foreach (var a in agents)
+                    Console.Error.WriteLine($"{a.Id,-15}{a.AppName,-20}{a.Platform,-15}{a.Tfm,-25}{a.Port,-7}");
+                Console.Error.WriteLine();
+                Console.Error.WriteLine("Example: maui-devflow MAUI status --agent-port <port>");
             }
         }
         catch { /* broker unavailable, fall through */ }
 
-        // Fall back to config file (already checked above if broker was alive)
-        return ReadConfigPort() ?? 9223;
+        return Broker.BrokerClient.ReadConfigPort() ?? 9223;
     }
 
     // ===== Broker Commands =====
