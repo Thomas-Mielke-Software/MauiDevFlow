@@ -189,7 +189,14 @@ public class GtkBlazorWebViewDebugService : IDisposable
                 if (method.StartsWith("Browser."))
                     return HandleBrowserMethod(method, id);
 
-                var escaped = cdpJson.Replace("\\", "\\\\").Replace("'", "\\'").Replace("\n", "\\n").Replace("\r", "\\r");
+                // Chobitsu requires a non-zero id: a response with id=0/missing causes
+                // the listener's !t.id branch to fire, trying t.method.split on the
+                // *response* object (which has no method), crashing before onMessage is called.
+                string cdpForChobitsu = id > 0
+                    ? cdpJson
+                    : "{\"id\":1," + cdpJson.Substring(1); // inject "id":1 after opening {
+
+                var escaped = cdpForChobitsu.Replace("\\", "\\\\").Replace("'", "\\'").Replace("\n", "\\n").Replace("\r", "\\r");
                 var sendScript = ScriptResources.Load("cdp-send-receive.js")
                     .Replace("%CDP_MESSAGE%", escaped);
                 var readScript = ScriptResources.Load("cdp-read-response.js");
@@ -445,6 +452,7 @@ public class GtkBlazorWebViewDebugService : IDisposable
     private static string? UnescapeEvalResult(string? result)
     {
         if (string.IsNullOrEmpty(result)) return null;
+        if (result == "null") return null; // WebKitGTK returns JS null as the string "null" — treat as no response yet
         if (result.StartsWith("\"") && result.EndsWith("\""))
         {
             try { return System.Text.Json.JsonSerializer.Deserialize<string>(result); }
